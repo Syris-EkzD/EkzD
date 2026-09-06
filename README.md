@@ -1,11 +1,57 @@
 # Workflow Manager V0
 
+**Status: frozen after V0.** Workflow Manager is a completed WhiteTree experiment,
+preserved for historical and technical reference. It is not WhiteTree's central
+orchestration platform or part of the standard development path.
+
 WM-V0-01 processes WhiteTree Mind’s reviewed Horus agent proposal into a
 non-canonical profile candidate. Python 3.10+ and Git are the only dependencies.
 WM-V0-02 separately promotes a reviewed candidate with explicit approval.
 There is no service, agent framework, or account integration.
 
-## Run
+## Current direction
+
+The canonical architecture and decisions live in these files, relative to the
+WhiteTree root (in the separate Mind repository):
+
+- `Mind/Vault/Projects/WhiteTree/Overview.md`
+- `Mind/Vault/Projects/WhiteTree/Governance.md`
+- `Mind/Vault/Technology/Tools/AI-Development-Workflow.md`
+- `Mind/Vault/Projects/WorkflowManager/Overview.md`
+- `Mind/Vault/Projects/WorkflowManager/Tasks.md`
+
+WhiteTree uses **Mind + Work + ChatGPT/Work + Codex + Git/CI**. EkzD and Horus
+are domain role or skill definitions, not standalone autonomous systems. Ordinary
+documentation work uses scoped edits, Git review, and an approved commit; it does
+not require this tool's candidate-generation and promotion workflow.
+
+The task decisions are:
+
+- **WM-V0-01:** completed candidate generation and human review.
+- **WM-V0-02:** completed explicit canonical promotion.
+- **WM-V1-01:** generalizing workflow definitions is paused pending evidence of need.
+- **WM-V1-02:** automatic Codex invocation is cancelled pending evidence of need.
+
+V0 used a controlled current-session reasoning handoff. It did not autonomously
+invoke Codex. Historical V1 objectives do not authorize further development.
+Reconsideration requires a real recurring workflow, observed friction, a bounded
+requirement, evidence that established tools cannot meet it, and explicit approval.
+Any future solution should begin with the smallest missing component and need not
+belong in Workflow Manager.
+
+Preserve the V0 source, tests, original Mind proposal and candidate, and useful
+local reports. Maintenance is limited to keeping the historical record clear or
+addressing a concrete safety issue. Private run and promotion artifacts remain
+local and excluded from Git.
+
+## Historical V0 usage
+
+The commands below document the retained implementation, not an instruction to
+rerun the completed workflow. The canonical Horus profile already exists and has
+since been revised in Mind. Generation refuses an existing candidate; promotion
+refuses an existing canonical destination and rejects changed source inputs.
+Do not remove preserved files to replay the example. Use the isolated test
+fixtures for verification.
 
 From `~/WhiteTree/Work/Tools/workflow-manager`:
 
@@ -145,9 +191,9 @@ After a human has reviewed and approved the exact candidate content, explicitly 
 python3 wm.py promote --run horus-rerun-02 --approve
 ```
 
-This command is documented here for later execution; implementing it does not
-promote the real Horus candidate. `--approve` asserts human semantic approval of
-the candidate bound to that run. It is mandatory and valid only with `promote`.
+This command is retained as a historical usage example. `--approve` asserts human
+semantic approval of the candidate bound to that run. It is mandatory and valid
+only with `promote`.
 Generation success never supplies approval. Promotion invokes no AI reasoning.
 
 WM-V0-02 requires an existing WM-V0-01 run with `ready_for_human_review`, no
