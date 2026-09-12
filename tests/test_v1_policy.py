@@ -97,16 +97,14 @@ class V1PolicyTests(unittest.TestCase):
         subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
         config.write_text(repo_wide, encoding="utf-8")
 
-        self.assertEqual(
-            "",
-            subprocess.run(
-                ["git", "diff", "--name-only", "--", ".ekzd/project.toml"],
-                cwd=self.root,
-                text=True,
-                capture_output=True,
-                check=True,
-            ).stdout,
-        )
+        head_config = subprocess.run(
+            ["git", "show", "HEAD:.ekzd/project.toml"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+        self.assertEqual(head_config, config.read_text(encoding="utf-8"))
         self.assertIn(
             ".ekzd/project.toml",
             subprocess.run(
