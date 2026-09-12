@@ -5,18 +5,22 @@ name = "EkzD"
 
 [sources]
 paths = [
-  "src/ekzd/ui.py",
   "src/ekzd/cli.py",
+  "src/ekzd/ui.py",
+  "src/ekzd/core.py",
   "src/ekzd/workflow.py",
+  "tests/test_cli.py",
   "tests/test_ui.py",
 ]
 
 [scope]
 include = [
-  "src/ekzd/ui.py",
   "src/ekzd/cli.py",
-  "tests/test_ui.py",
+  "src/ekzd/ui.py",
+  "src/ekzd/interactive.py",
   "tests/test_cli.py",
+  "tests/test_ui.py",
+  "tests/test_interactive.py",
 ]
 exclude = [
   "src/ekzd/core.py",
@@ -26,43 +30,59 @@ exclude = [
   ".ekzd/**",
 ]
 constraints = [
-  "This task is presentation and CLI UX work only; preserve EkzD workflow, verification, acceptance, and trust semantics.",
-  "Preserve existing command names, arguments, exit-code behavior, and persisted state structures.",
+  "This task adds a lightweight interactive terminal entry experience only; preserve EkzD workflow, verification, acceptance, scope, and trust semantics.",
+  "Running `ekzd` with no subcommand in an interactive terminal may launch the interactive shell.",
+  "Existing explicit commands, flags, arguments, exit-code behavior, and persisted state structures must remain unchanged.",
+  "A no-subcommand invocation in a non-interactive environment must never block waiting for input and must provide concise guidance with a non-zero exit status.",
+  "The interactive shell must reuse existing EkzD workflow and core operations rather than reimplementing trust or verification logic.",
   "Keep `ekzd prompt` deterministic plain contract output without decorative UI or ANSI styling.",
   "Keep `ekzd context --json` machine-readable and structurally unchanged.",
   "Preserve stdout/stderr separation for normal output and errors.",
   "Plain non-TTY and NO_COLOR output must remain readable and contain no ANSI escape sequences.",
-  "Do not add a TUI framework, spinners, interactive menus, or new runtime dependencies.",
+  "Use only the Python standard library; do not add runtime dependencies.",
+  "Do not add a full-screen alternate-screen TUI, mouse support, background refresh, animations, or spinner-heavy behavior.",
+  "Interactive abort and acceptance actions must require explicit user confirmation.",
 ]
 
 [authority]
 may = [
-  "Refactor reusable CLI presentation helpers.",
-  "Standardize human-facing command output.",
-  "Add or update focused UI and CLI presentation tests.",
+  "Add a dedicated interactive CLI controller module.",
+  "Adjust CLI parsing and dispatch so a no-subcommand TTY invocation can enter the interactive shell.",
+  "Extend reusable presentation helpers for the interactive experience.",
+  "Add or update focused interactive, UI, and CLI presentation tests.",
 ]
 requires_approval = [
-  "Changing commands, flags, arguments, or exit-code behavior.",
+  "Changing behavior of any existing explicit command, flag, argument, or exit code.",
   "Changing machine-readable output contracts.",
-  "Adding any dependency.",
+  "Changing persisted session or project state structures.",
+  "Adding any runtime dependency.",
+  "Changing core or workflow logic.",
 ]
 may_not = [
   "Change core workflow, verification, acceptance, scope, or Git enforcement behavior.",
+  "Modify src/ekzd/core.py or src/ekzd/workflow.py.",
   "Add GitHub authentication, networking, agent orchestration, daemon behavior, or autonomous merge behavior.",
+  "Introduce a TUI framework or full-screen terminal application.",
 ]
 
 [session]
-max_commits = 5
+max_commits = 6
 
 [acceptance]
 criteria = [
-  "Human-facing commands use a consistent and readable visual hierarchy.",
-  "Status clearly communicates session, verification, blocked state, and next action.",
-  "Verification output clearly communicates individual step results and final outcome.",
+  "Running `ekzd` with no subcommand in an interactive terminal launches a lightweight interactive shell.",
+  "The interactive entry experience explains EkzD in one concise sentence understandable to a new user.",
+  "The shell clearly communicates project, session state, verification state, and the recommended next action.",
+  "Available actions are state-aware and understandable without requiring prior knowledge of EkzD commands.",
+  "Interactive abort and session acceptance require explicit confirmation.",
+  "Invalid input, EOF, and interruption are handled cleanly without a traceback.",
+  "A no-subcommand non-TTY invocation never waits for interactive input and exits with concise guidance.",
+  "Existing explicit CLI commands retain their current behavior and output contracts.",
   "NO_COLOR and non-TTY output remain readable without ANSI escapes.",
   "`ekzd prompt` remains deterministic plain contract text.",
   "`ekzd context --json` remains machine-readable and structurally unchanged.",
   "No workflow or trust-model behavior changes.",
+  "No new runtime dependencies are added.",
   "All configured verification passes.",
 ]
 
