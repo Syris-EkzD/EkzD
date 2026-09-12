@@ -12,6 +12,7 @@ from typing import Any
 CONFIG_RELATIVE = Path(".ekzd/project.toml")
 STATE_RELATIVE = Path(".ekzd/session.json")
 SCHEMA_VERSION = 1
+DEFAULT_MAX_COMMITS = 3
 
 
 class HarnessError(RuntimeError):
@@ -100,6 +101,15 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
     _string_list(authority.get("may", []), "authority.may")
     _string_list(authority.get("requires_approval", []), "authority.requires_approval")
     _string_list(authority.get("may_not", []), "authority.may_not")
+
+    session = data.get("session", {})
+    if not isinstance(session, dict):
+        raise HarnessError("session must be a table.")
+    max_commits = session.get("max_commits", DEFAULT_MAX_COMMITS)
+    if isinstance(max_commits, bool) or not isinstance(max_commits, int) or max_commits < 1:
+        raise HarnessError("session.max_commits must be a positive integer.")
+    session["max_commits"] = max_commits
+    data["session"] = session
 
     acceptance = data.get("acceptance", {})
     if not isinstance(acceptance, dict):
@@ -220,6 +230,7 @@ def init_project(root: Path, name: str | None = None) -> Path:
         '[sources]\npaths = []\n\n'
         '[scope]\ninclude = []\nexclude = []\nconstraints = []\n\n'
         '[authority]\nmay = []\nrequires_approval = []\nmay_not = []\n\n'
+        '[session]\nmax_commits = 3\n\n'
         '[acceptance]\ncriteria = []\n\n'
         '[verification]\nsteps = []\n'
     )
@@ -251,6 +262,7 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
         "project": config["project"]["name"],
         "started_at": utc_now(),
         "start_git": git_state(root),
+        "session_policy": {"max_commits": config["session"]["max_commits"]},
         "handoff": {"done": [], "next": []},
         "verification": None,
         "acceptance": None,
@@ -267,6 +279,7 @@ def build_context(root: Path) -> dict[str, Any]:
         "project": config["project"],
         "objective": state.get("objective") if state else None,
         "session_status": state.get("status") if state else None,
+        "session": config.get("session", {}),
         "sources": config.get("sources", {}),
         "scope": config.get("scope", {}),
         "authority": config.get("authority", {}),
@@ -288,7 +301,7 @@ def render_context(context: dict[str, Any]) -> str:
         f"- HEAD: {context['git']['head']}",
         f"- Working tree entries: {len(context['git']['status'])}",
     ]
-    for title, key in (("Sources", "sources"), ("Scope", "scope"), ("Authority", "authority"), ("Acceptance", "acceptance")):
+    for title, key in (("Session Policy", "session"), ("Sources", "sources"), ("Scope", "scope"), ("Authority", "authority"), ("Acceptance", "acceptance")):
         lines.extend(["", f"## {title}", json.dumps(context[key], indent=2, sort_keys=True)])
     return "\n".join(lines) + "\n"
 
@@ -345,9 +358,41 @@ def _session_start_head(state: dict[str, Any]) -> str:
     return start_git["head"]
 
 
+def session_commit_count(root: Path, start_head: str) -> int:
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", start_head, "HEAD"],
+        cwd=root,
+        capture_output=True,
+    )
+    if ancestor.returncode == 1:
+        raise HarnessError("Session history diverged from its starting commit; start a fresh session.")
+    if ancestor.returncode != 0:
+        detail = ancestor.stderr.decode("utf-8", errors="replace").strip() or ancestor.stdout.decode("utf-8", errors="replace").strip()
+        raise HarnessError(f"Unable to validate session Git history: {detail}")
+    try:
+        return int(run_git(root, "rev-list", "--count", f"{start_head}..HEAD"))
+    except ValueError as exc:
+        raise HarnessError("Unable to count commits in the active session.") from exc
+
+
+def enforce_session_budget(root: Path, config: dict[str, Any], state: dict[str, Any]) -> dict[str, int]:
+    max_commits = config["session"]["max_commits"]
+    recorded_policy = state.get("session_policy")
+    if isinstance(recorded_policy, dict) and recorded_policy.get("max_commits") != max_commits:
+        raise HarnessError("Session commit budget changed after the session started; start a fresh session to use the new budget.")
+    commit_count = session_commit_count(root, _session_start_head(state))
+    if commit_count > max_commits:
+        raise HarnessError(
+            f"Session commit budget exceeded: {commit_count} commits > {max_commits} allowed. "
+            "Reduce the session history or start a fresh session with a larger configured budget."
+        )
+    return {"commit_count": commit_count, "max_commits": max_commits}
+
+
 def verify_session(root: Path) -> dict[str, Any]:
     config = load_config(root, ready=True)
     state = _active_state(root)
+    budget = enforce_session_budget(root, config, state)
     paths = enforce_scope(root, config, start_head=_session_start_head(state))
     results: list[dict[str, Any]] = []
     for step in config["verification"]["steps"]:
@@ -388,6 +433,7 @@ def verify_session(root: Path) -> dict[str, Any]:
         "git": git_state(root),
         "state_fingerprint": git_state_fingerprint(root),
         "changed_paths": paths,
+        "session_budget": budget,
         "steps": results,
     }
     state["verification"] = verification
@@ -421,6 +467,7 @@ def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
         raise HarnessError("Acceptance blocked: Git/worktree state changed after verification.")
     if verification.get("state_fingerprint") != git_state_fingerprint(root):
         raise HarnessError("Acceptance blocked: Git-visible file contents changed after verification.")
+    enforce_session_budget(root, config, state)
     enforce_scope(root, config, start_head=_session_start_head(state))
     acceptance = {
         "accepted_at": utc_now(),
