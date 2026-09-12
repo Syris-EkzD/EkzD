@@ -5,22 +5,30 @@ name = "EkzD"
 
 [sources]
 paths = [
+  "README.md",
+  "VERIFICATION.md",
   "src/ekzd/cli.py",
   "src/ekzd/ui.py",
+  "src/ekzd/interactive.py",
   "src/ekzd/core.py",
   "src/ekzd/workflow.py",
   "tests/test_cli.py",
   "tests/test_ui.py",
+  "tests/test_interactive.py",
 ]
 
 [scope]
 include = [
+  "README.md",
+  "VERIFICATION.md",
   "src/ekzd/cli.py",
   "src/ekzd/ui.py",
   "src/ekzd/interactive.py",
+  "src/ekzd/terminal.py",
   "tests/test_cli.py",
   "tests/test_ui.py",
   "tests/test_interactive.py",
+  "tests/test_terminal.py",
 ]
 exclude = [
   "src/ekzd/core.py",
@@ -30,26 +38,35 @@ exclude = [
   ".ekzd/**",
 ]
 constraints = [
-  "This task adds a lightweight interactive terminal entry experience only; preserve EkzD workflow, verification, acceptance, scope, and trust semantics.",
-  "Running `ekzd` with no subcommand in an interactive terminal may launch the interactive shell.",
-  "Existing explicit commands, flags, arguments, exit-code behavior, and persisted state structures must remain unchanged.",
-  "A no-subcommand invocation in a non-interactive environment must never block waiting for input and must provide concise guidance with a non-zero exit status.",
-  "The interactive shell must reuse existing EkzD workflow and core operations rather than reimplementing trust or verification logic.",
-  "Keep `ekzd prompt` deterministic plain contract output without decorative UI or ANSI styling.",
+  "Upgrade bare `ekzd` into a polished persistent terminal session without changing EkzD workflow, verification, acceptance, scope, or trust semantics.",
+  "The interactive experience should feel like a professional terminal application inspired by modern coding CLIs, but it must be designed specifically around EkzD rather than imitate an AI chat interface.",
+  "Running bare `ekzd` in an interactive terminal should clear or take over the terminal display and present a persistent EkzD status header with the working session area below it.",
+  "Prefer an alternate-screen terminal session when supported so the original shell display is restored cleanly when EkzD exits.",
+  "The persistent header must communicate relevant EkzD state such as project, session state, task, branch, verification state, commit budget, and recommended next action when those values are available.",
+  "Interactive actions must continue to derive their availability and state from existing workflow information and reuse existing EkzD workflow and core operations rather than reimplementing trust or verification logic.",
+  "The session workspace may retain and render concise action/output history beneath the persistent header so using EkzD feels like one coherent terminal session.",
+  "Existing explicit commands, flags, arguments, exit codes, output contracts, and persisted state structures must remain unchanged.",
+  "A bare no-subcommand invocation in a non-interactive environment must never enter the full-screen experience or block waiting for input.",
+  "Keep `ekzd prompt` deterministic plain contract output without decorative terminal UI or ANSI styling.",
   "Keep `ekzd context --json` machine-readable and structurally unchanged.",
-  "Preserve stdout/stderr separation for normal output and errors.",
-  "Plain non-TTY and NO_COLOR output must remain readable and contain no ANSI escape sequences.",
-  "Use only the Python standard library; do not add runtime dependencies.",
-  "Do not add a full-screen alternate-screen TUI, mouse support, background refresh, animations, or spinner-heavy behavior.",
-  "Interactive abort and acceptance actions must require explicit user confirmation.",
+  "Preserve stdout/stderr separation outside the interactive terminal presentation layer.",
+  "Respect `NO_COLOR` and terminal capability limitations; unsupported or unsuitable terminals must degrade cleanly rather than producing broken control sequences.",
+  "The terminal must be restored cleanly after normal exit, EOF, Ctrl-C, handled EkzD errors, and unexpected interactive-session failures.",
+  "Use only the Python standard library; do not add runtime dependencies or a third-party TUI framework.",
+  "Do not add mouse support, tabs, multi-pane layouts, background polling, autonomous refresh loops, embedded editing, model/chat behavior, or spinner-heavy animation.",
+  "Interactive abort and acceptance actions must continue to require explicit user confirmation.",
+  "Update user-facing documentation to describe the interactive terminal session accurately and remove obsolete documentation that says EkzD is not a full-screen terminal application.",
 ]
 
 [authority]
 may = [
-  "Add a dedicated interactive CLI controller module.",
-  "Adjust CLI parsing and dispatch so a no-subcommand TTY invocation can enter the interactive shell.",
-  "Extend reusable presentation helpers for the interactive experience.",
-  "Add or update focused interactive, UI, and CLI presentation tests.",
+  "Add a dedicated terminal presentation module for screen lifecycle, cursor/screen control, layout, and terminal capability handling.",
+  "Extend the existing interactive controller to drive the persistent terminal session while continuing to delegate workflow operations to existing EkzD APIs.",
+  "Adjust bare no-subcommand TTY dispatch as needed for the richer terminal session.",
+  "Extend reusable UI helpers for the terminal experience.",
+  "Add or update focused terminal, interactive, UI, and CLI presentation tests.",
+  "Update README.md to document the V1.4 interactive terminal experience and current operator workflow.",
+  "Update VERIFICATION.md where the new terminal behavior introduces relevant verification expectations.",
 ]
 requires_approval = [
   "Changing behavior of any existing explicit command, flag, argument, or exit code.",
@@ -61,28 +78,35 @@ requires_approval = [
 may_not = [
   "Change core workflow, verification, acceptance, scope, or Git enforcement behavior.",
   "Modify src/ekzd/core.py or src/ekzd/workflow.py.",
-  "Add GitHub authentication, networking, agent orchestration, daemon behavior, or autonomous merge behavior.",
-  "Introduce a TUI framework or full-screen terminal application.",
+  "Add GitHub authentication, networking, agent orchestration, daemon behavior, autonomous merge behavior, or AI/model functionality.",
+  "Add a third-party TUI framework.",
 ]
 
 [session]
-max_commits = 6
+max_commits = 8
 
 [acceptance]
 criteria = [
-  "Running `ekzd` with no subcommand in an interactive terminal launches a lightweight interactive shell.",
-  "The interactive entry experience explains EkzD in one concise sentence understandable to a new user.",
-  "The shell clearly communicates project, session state, verification state, and the recommended next action.",
-  "Available actions are state-aware and understandable without requiring prior knowledge of EkzD commands.",
-  "Interactive abort and session acceptance require explicit confirmation.",
-  "Invalid input, EOF, and interruption are handled cleanly without a traceback.",
-  "A no-subcommand non-TTY invocation never waits for interactive input and exits with concise guidance.",
+  "Running bare `ekzd` in a supported interactive terminal launches a polished terminal session rather than the V1.3 scrolling menu experience.",
+  "Entering the interactive terminal session clears or takes over the display and presents a persistent EkzD header with the working interaction area beneath it.",
+  "The terminal session is visually and behaviorally designed around EkzD task management rather than presented as an AI chat interface.",
+  "The persistent header clearly communicates the most relevant available project, session, branch, verification, commit-budget, and next-action information without unnecessary clutter.",
+  "The header remains at the top as actions are performed and is refreshed when EkzD workflow state changes.",
+  "The interactive workspace provides clear prompts and concise session output beneath the persistent header.",
+  "State-aware actions remain derived from existing workflow status and delegate operations to existing EkzD workflow/core functions.",
+  "Interactive abort and session acceptance continue to require explicit confirmation.",
+  "Normal exit, EOF, Ctrl-C, handled EkzD errors, and unexpected interactive failures restore the terminal cleanly without leaving it in a corrupted screen or cursor state.",
+  "When alternate-screen behavior is used, exiting EkzD restores the user's previous shell display.",
+  "Unsupported terminal capabilities degrade safely to a readable interaction instead of emitting broken control sequences.",
+  "A bare non-TTY invocation never waits for interactive input and retains concise non-interactive guidance.",
+  "NO_COLOR remains respected.",
   "Existing explicit CLI commands retain their current behavior and output contracts.",
-  "NO_COLOR and non-TTY output remain readable without ANSI escapes.",
   "`ekzd prompt` remains deterministic plain contract text.",
   "`ekzd context --json` remains machine-readable and structurally unchanged.",
   "No workflow or trust-model behavior changes.",
   "No new runtime dependencies are added.",
+  "README.md accurately documents the new interactive terminal experience and no longer describes EkzD as only a non-full-screen command-oriented CLI.",
+  "VERIFICATION.md is updated only where necessary to cover relevant terminal-interface verification behavior.",
   "All configured verification passes.",
 ]
 
