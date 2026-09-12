@@ -74,6 +74,27 @@ class ScopeHistoryVisibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "assume-unchanged/skip-worktree"):
             verify_session(self.root)
 
+    def test_content_filter_hiding_out_of_scope_change_is_rejected(self) -> None:
+        attributes = self.root / ".git/info/attributes"
+        attributes.write_text("secret.txt filter=ekzd-hide\n", encoding="utf-8")
+        subprocess.run(["git", "config", "filter.ekzd-hide.clean", "sed 's/hidden change/original/'"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "filter.ekzd-hide.smudge", "cat"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "filter.ekzd-hide.required", "true"], cwd=self.root, check=True)
+        (self.root / "secret.txt").write_text("hidden change\n", encoding="utf-8")
+
+        self.assertEqual(
+            "",
+            subprocess.run(
+                ["git", "diff", "--name-only", "--", "secret.txt"],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip(),
+        )
+        with self.assertRaisesRegex(HarnessError, "Git content filters are unsupported"):
+            verify_session(self.root)
+
     def test_reverted_out_of_scope_commit_still_counts_for_scope(self) -> None:
         (self.root / "secret.txt").write_text("forbidden\n", encoding="utf-8")
         subprocess.run(["git", "add", "secret.txt"], cwd=self.root, check=True)
