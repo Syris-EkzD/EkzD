@@ -115,6 +115,32 @@ class CliPresentationTests(unittest.TestCase):
         self.assertIn("EkzD · status", stdout.getvalue())
         self.assertEqual("", stderr.getvalue())
 
+    def test_finished_status_recovers_persisted_project_identity(self) -> None:
+        status = {
+            "session_status": "finished",
+            "objective": "Change one thing",
+            "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
+        }
+        state = {
+            "status": "finished",
+            "project": "Demo",
+            "objective": "Change one thing",
+        }
+        self.assertNotIn("project", status)
+
+        with (
+            mock.patch.object(cli, "build_workflow_status", return_value=status) as build_status,
+            mock.patch.object(cli, "read_state", return_value=state) as read_state,
+        ):
+            code, stdout, stderr = self._run(["status"])
+
+        build_status.assert_called_once_with(Path("/repo"))
+        read_state.assert_called_once_with(Path("/repo"))
+        self.assertEqual(0, code)
+        self.assertIn("! Session: finished", stdout)
+        self.assertIn("project  Demo", stdout)
+        self.assertEqual("", stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
