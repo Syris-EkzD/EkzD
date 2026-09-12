@@ -302,7 +302,14 @@ def render_context(context: dict[str, Any]) -> str:
         f"- HEAD: {context['git']['head']}",
         f"- Working tree entries: {len(context['git']['status'])}",
     ]
-    for title, key in (("Session Policy", "session"), ("Sources", "sources"), ("Scope", "scope"), ("Authority", "authority"), ("Acceptance", "acceptance")):
+    for title, key in (
+        ("Session Policy", "session"),
+        ("Sources", "sources"),
+        ("Scope", "scope"),
+        ("Authority", "authority"),
+        ("Acceptance", "acceptance"),
+        ("Verification", "verification"),
+    ):
         lines.extend(["", f"## {title}", json.dumps(context[key], indent=2, sort_keys=True)])
     return "\n".join(lines) + "\n"
 
