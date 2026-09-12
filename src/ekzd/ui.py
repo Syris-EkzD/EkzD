@@ -124,9 +124,15 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
     session_status = str(status["session_status"])
     if session_status != "active":
         lines.append(warning(f"Session: {session_status}", enabled=enabled))
+        project = status.get("project")
         objective = status.get("objective")
+        details: list[str] = []
+        if project:
+            details.append(_meta("project", str(project), enabled=enabled))
         if objective:
-            lines.extend(["", _meta("objective", str(objective), enabled=enabled)])
+            details.append(_meta("objective", str(objective), enabled=enabled))
+        if details:
+            lines.extend(["", *details])
         lines.extend(_next_lines(str(status["next"]), enabled=enabled))
         return "\n".join(lines) + "\n"
 
@@ -139,6 +145,7 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
     lines.extend(
         [
             "",
+            _meta("project", str(status["project"]), enabled=enabled),
             _meta("objective", str(status["objective"]), enabled=enabled),
             _meta("verification", _verification_value(verification, enabled=enabled), enabled=enabled),
             "",
