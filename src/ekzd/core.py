@@ -81,6 +81,23 @@ def ensure_index_paths_visible(root: Path) -> None:
         )
 
 
+def ensure_project_config_committed_clean(root: Path) -> None:
+    ensure_index_paths_visible(root)
+    path = CONFIG_RELATIVE.as_posix()
+    if run_git(root, "ls-tree", "--name-only", "HEAD", "--", path) != path:
+        raise HarnessError(
+            "Project harness configuration must be committed before starting or using an active session: "
+            f"{path}"
+        )
+    unstaged = run_git(root, "diff", "--name-only", "--no-renames", "--", path)
+    staged = run_git(root, "diff", "--cached", "--name-only", "--no-renames", "--", path)
+    if unstaged or staged:
+        raise HarnessError(
+            "Project harness configuration must remain clean while an EkzD session is active; "
+            "abort the session, restore or commit the configuration outside the session, then start a fresh session."
+        )
+
+
 def find_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
@@ -298,6 +315,7 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
     if not objective:
         raise HarnessError("Objective cannot be empty.")
     config = load_config(root, ready=True)
+    ensure_project_config_committed_clean(root)
     existing = read_state(root)
     if existing and existing.get("status") == "active":
         raise HarnessError("An active EkzD session already exists. Finish or abort it before starting another.")
@@ -322,6 +340,9 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
 def build_context(root: Path) -> dict[str, Any]:
     config = load_config(root, ready=True)
     state = read_state(root)
+    if state and state.get("status") == "active":
+        enforce_session_contract(root, state)
+        enforce_protected_session_history(root, _session_start_head(state))
     return {
         "schema_version": SCHEMA_VERSION,
         "project": config["project"],
@@ -443,6 +464,7 @@ def _session_start_head(state: dict[str, Any]) -> str:
 
 
 def enforce_session_contract(root: Path, state: dict[str, Any]) -> None:
+    ensure_project_config_committed_clean(root)
     recorded_digest = state.get("config_digest")
     if not isinstance(recorded_digest, str) or not recorded_digest:
         raise HarnessError("Active session is missing its starting project configuration digest.")
