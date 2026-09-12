@@ -15,6 +15,14 @@ ekzd handoff --done "implemented validation" --next "review edge cases"
 ekzd finish --accept
 ```
 
+If an active session cannot or should not be accepted, close it without acceptance:
+
+```sh
+ekzd abort
+```
+
+`abort` changes only local EkzD session state. It does not revert project files, commits, or Git history, and it never records acceptance.
+
 `ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. The project configuration is committed; session state is local and disposable.
 
 ## Project configuration
@@ -56,7 +64,9 @@ cwd = "."
 timeout_seconds = 600
 ```
 
-Configuration is intentionally explicit. Empty acceptance criteria or an empty verification plan prevent a session from starting.
+Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
+
+The complete `.ekzd/project.toml` digest is captured when a session starts. Changing scope, authority, session policy, acceptance criteria, verification commands, or any other project harness configuration during an active session invalidates that session. Abort it and start a fresh session after making configuration changes.
 
 `session.max_commits` is a hard session-size budget. `ekzd init` writes `3`, and V1 also treats a missing value as `3` for backward compatibility. Projects may choose another positive integer when a genuinely larger bounded task needs it. The configured value is captured when the session starts; it cannot be raised mid-session to excuse work that has already exceeded its original boundary.
 
@@ -69,21 +79,24 @@ EkzD treats verification and acceptance as different stages.
 `ekzd verify`:
 
 1. validates the project configuration;
-2. enforces the active session's commit budget;
-3. checks changed paths against `scope.include` and `scope.exclude`;
-4. runs verification commands without a shell;
-5. records the exact Git/worktree state, session budget, and configuration digest that passed.
+2. requires it to match the configuration captured when the session started;
+3. enforces the active session's commit budget;
+4. checks changed paths against `scope.include` and `scope.exclude`;
+5. runs verification commands without a shell;
+6. records the exact Git-visible state, session budget, and configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
+- the project configuration still matches the active session and the verified configuration;
 - the session remains within its original commit budget;
-- the project configuration is unchanged since verification;
 - the Git HEAD, branch, worktree state, and Git-visible file contents are unchanged since verification;
 - scope rules still pass; and
 - a human explicitly supplies `--accept`.
 
-Any change after verification invalidates acceptance until verification is rerun. A green command result is evidence, not automatic approval.
+Any Git-visible change after verification invalidates acceptance until verification is rerun. A green command result is evidence, not automatic approval.
+
+The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them.
 
 ## Context and handoff
 
@@ -108,10 +121,17 @@ GitHub Actions can provide remote verification for repositories that need depend
 
 EkzD requires Python 3.11+ and Git.
 
+Install it from the repository with:
+
+```sh
+python3 -m pip install .
+ekzd --help
+```
+
 Run its tests with:
 
 ```sh
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 python3 -m compileall -q src tests
 ```
 
