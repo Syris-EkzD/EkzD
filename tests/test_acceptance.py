@@ -92,6 +92,24 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(HarnessError):
             verify_session(self.root)
 
+    def test_verification_blocks_committed_out_of_scope_change(self) -> None:
+        (self.root / "src/app.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (self.root / "notes.txt").write_text("outside scope\n", encoding="utf-8")
+        subprocess.run(["git", "add", "notes.txt"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "add notes"], cwd=self.root, check=True)
+
+        with self.assertRaises(HarnessError):
+            verify_session(self.root)
+
+    def test_verification_allows_committed_in_scope_change(self) -> None:
+        subprocess.run(["git", "add", "src/app.py"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "change app"], cwd=self.root, check=True)
+
+        verification = verify_session(self.root)
+
+        self.assertTrue(verification["passed"])
+        self.assertIn("src/app.py", verification["changed_paths"])
+
 
 if __name__ == "__main__":
     unittest.main()
