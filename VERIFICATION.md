@@ -4,7 +4,7 @@ This document defines the V1 acceptance contract. It is intentionally stricter t
 
 ## Verification
 
-A verification result is valid only for the exact Git-visible state that produced it and only under the harness configuration captured when the session started.
+A verification result is valid only for the exact Git-visible state that produced it and only under the canonical committed harness configuration captured when the session started.
 
 EkzD records:
 
@@ -17,11 +17,19 @@ EkzD records:
 - the active session's final commit count and configured maximum;
 - each verification command, working directory, exit code, and bounded output.
 
-Verification fails closed when configuration is invalid or changed after session start, a protected EkzD harness path appears in active-session commit history, the session commit budget is exceeded, scope is violated, tracked paths use Git index flags that suppress normal change visibility, local session state is tracked or changes during verification, a working directory escapes the repository, a command times out, a configured command cannot be launched, or any configured command fails.
+Verification fails closed when configuration is invalid, uncommitted, staged, unstaged, changed after session start, or historically touched during the active session; when the session commit budget is exceeded; when scope is violated; when tracked paths use Git index flags that suppress normal change visibility; when local session state is tracked or changes during verification; when a working directory escapes the repository; when a command times out; when a configured command cannot be launched; or when any configured command fails.
 
-Before commands run, EkzD validates the ready project configuration, active session contract, protected harness history, commit budget, Git index visibility, and changed-path scope, and pins the active local session state for the verification attempt. After the configured commands finish, EkzD reloads the ready configuration, requires the local session state to remain untracked and unchanged, and rechecks the frozen configuration digest, protected harness history, commit budget, Git index visibility, and scope against the original pinned session state before recording verification evidence. This prevents a verifier from redefining the session baseline, silently changing the contract, publishing local session metadata through accepted history, exceeding the session budget, hiding tracked changes with Git index flags, or creating Git-visible changes outside the declared scope while still producing a green verification result.
+Before commands run, EkzD validates the ready project configuration, requires the canonical `.ekzd/project.toml` to remain committed and clean, validates the active session contract, protected harness history, commit budget, Git index visibility, and changed-path scope, and pins the active local session state for the verification attempt. After the configured commands finish, EkzD reloads the ready configuration, again requires the canonical project contract to be committed and clean, requires the local session state to remain untracked and unchanged, and rechecks the frozen configuration digest, protected harness history, commit budget, Git index visibility, and scope against the original pinned session state before recording verification evidence. This prevents a verifier from redefining the session baseline, staging a different harness contract, silently changing contextual instructions, publishing local session metadata through accepted history, exceeding the session budget, hiding tracked changes with Git index flags, or creating Git-visible changes outside the declared scope while still producing a green verification result.
 
 Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git rename collapsing for scope evaluation so both sides of a move are evaluated independently, and it parses Git paths without relying on newline-delimited or quoted output. For committed work, scope is historical rather than net-only: EkzD unions the paths touched by every commit reachable in the active session range from the recorded starting `HEAD` through the current `HEAD`. A path therefore remains part of scope evaluation even when a later session commit restores its contents to the starting version.
+
+## Canonical project contract
+
+`.ekzd/project.toml` is V1's canonical project contract. Before `ekzd start`, it must already exist in `HEAD` and must have no staged or unstaged changes. V1 intentionally does not support starting a session from an untracked, staged-only, or locally dirty project contract.
+
+This gives the single-operator workflow one reproducible definition of scope, authority, sources, session policy, acceptance criteria, and verification commands. HEAD, the Git index, the working tree, `ekzd context --json`, local verification, and CI are not allowed to silently disagree about which project contract is authoritative.
+
+When `ekzd start` creates a session, it records the digest of the complete committed `.ekzd/project.toml` file. While that session is active, `ekzd context`, `ekzd verify`, and `ekzd finish --accept` require the file to remain clean and to match the recorded digest. If configuration must change, abort or finish the session first, edit and commit the configuration outside an active session, then start a fresh session.
 
 ## Protected harness history
 
@@ -34,11 +42,7 @@ This protection is independent of `scope.include` and `scope.exclude`. A repo-wi
 
 The protected set is intentionally limited to these two files rather than the entire `.ekzd/` directory. Future non-trust-critical EkzD artifacts may therefore evolve without inheriting a blanket history prohibition. Adding another trust-critical harness file in a future version requires explicitly adding it to the protected set.
 
-## Immutable session contract
-
-When `ekzd start` creates a session, it records the digest of the complete `.ekzd/project.toml` file.
-
-Verification and acceptance require the current configuration to match that starting digest. Scope, authority, session policy, acceptance criteria, verification commands, and other harness settings therefore cannot be loosened or otherwise changed during an active session. The historical protection is stricter than the final-byte digest alone: committing `.ekzd/project.toml` during the session permanently invalidates that session even if a later commit restores the exact original bytes. Change configuration only after aborting or finishing the current session, commit the configuration change outside an active session, then start a fresh session.
+The historical rule is stricter than the current-byte digest alone: committing `.ekzd/project.toml` during the session permanently invalidates that session even if a later commit restores the exact original bytes.
 
 ## Session-state integrity
 
@@ -70,9 +74,15 @@ Directory patterns ending in `/` match that directory and its descendants. Other
 
 Committed scope includes every path touched by every commit in the active session history, not only files whose final contents differ from the starting tree. Reverting an out-of-scope change in a later commit does not erase that path from the session's scope evidence. Current staged, unstaged, and untracked changes are then unioned with that committed history before the allowlist and denylist are evaluated.
 
-Protected harness history is evaluated separately from project scope. `.ekzd/project.toml` and `.ekzd/session.json` are rejected when they appear in active-session commits regardless of project scope. Only the current untracked `.ekzd/session.json` file is omitted from ordinary project changed-path evaluation because it is required local harness metadata.
+Protected harness history and canonical-config cleanliness are evaluated separately from project scope. `.ekzd/project.toml` cannot be dirty, staged, uncommitted, or present in active-session commits regardless of project scope. `.ekzd/session.json` cannot be tracked or appear in active-session commits. Only the current untracked `.ekzd/session.json` file is omitted from ordinary project changed-path evaluation because it is required local harness metadata.
 
 EkzD rejects tracked paths marked with Git's `assume-unchanged` or `skip-worktree` index flags because those flags intentionally suppress ordinary status/diff visibility and would weaken deterministic scope and exact-state checks. V1 therefore does not support operating inside a sparse-checkout state that depends on `skip-worktree`; clear those flags or use a normal checkout before starting or verifying an EkzD session.
+
+## Context integrity
+
+`ekzd context` and `ekzd context --json` are part of the active contract, not merely convenience renderers. When a session is active, EkzD refuses to emit context unless the committed `.ekzd/project.toml` is still clean, still matches the session-start digest, and has not appeared in active-session commit history.
+
+This matters because sources, authority, and free-text constraints are intentionally contextual rather than semantically enforced by V1. The prompt-generator must therefore receive the same frozen contract that later verification and acceptance use.
 
 ## AI-assisted operating model
 
@@ -82,7 +92,7 @@ In the recommended V1 workflow, the local EkzD session defines the contract, `ek
 
 This means V1 provides deterministic post-work enforcement rather than real-time control over a remote AI session. A remote code generator can technically create an invalid commit; EkzD's responsibility is to refuse verification or acceptance when that Git-visible result violates the measurable contract.
 
-Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces configuration integrity, protected harness-history integrity, local session-state integrity, Git index visibility, historical and current path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
+Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces canonical configuration integrity, protected harness-history integrity, local session-state integrity, Git index visibility, historical and current path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
 
 ## Acceptance
 
@@ -91,7 +101,7 @@ Acceptance is a separate stage from verification.
 `ekzd finish --accept` must reject the task unless all of the following are true:
 
 1. an active local, untracked session exists;
-2. the project harness configuration still matches the digest captured at session start;
+2. `.ekzd/project.toml` remains committed, clean, and identical to the digest captured at session start;
 3. neither `.ekzd/project.toml` nor `.ekzd/session.json` appears in active-session commit history;
 4. configured verification completed successfully;
 5. the active session still satisfies its original commit budget;
