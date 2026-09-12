@@ -130,7 +130,7 @@ timeout_seconds = 600
 
 Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
 
-`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a session unless that file already exists in `HEAD` and has no staged or unstaged changes. Once the session is active, `ekzd context`, `ekzd verify`, and `ekzd finish --accept` require the config to remain clean and to match the complete file digest captured at session start. This intentionally avoids separate HEAD/index/worktree versions of the contract.
+`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a session unless that file already exists in `HEAD` as a regular tracked file and has no staged or unstaged changes. For an active session, EkzD parses and hashes the raw `HEAD:.ekzd/project.toml` blob rather than the worktree copy, so clean/smudge filters, line-ending conversion, or other checkout transformations cannot redefine the contract. `ekzd context`, `ekzd verify`, and `ekzd finish --accept` all use that committed contract while continuing to require the worktree/index path to remain clean.
 
 Changing scope, authority, sources, session policy, acceptance criteria, verification commands, or any other project harness configuration therefore requires ending the current session first. Abort or finish the session, edit and commit `.ekzd/project.toml`, then start a fresh session. Any active-session commit that touches `.ekzd/project.toml` permanently invalidates that session even if a later commit restores the exact original bytes.
 
@@ -146,20 +146,20 @@ EkzD treats verification and acceptance as different stages.
 
 `ekzd verify`:
 
-1. validates the project configuration;
-2. requires `.ekzd/project.toml` to remain the clean committed contract captured when the session started;
+1. validates the committed project configuration;
+2. requires `.ekzd/project.toml` to remain the clean regular tracked contract captured when the session started;
 3. requires the active session state to remain local and untracked;
 4. enforces the active session's commit budget;
 5. rejects any active-session commit history that touches `.ekzd/project.toml` or `.ekzd/session.json`, independently of project scope;
 6. checks changed paths against `scope.include` and `scope.exclude` before verification;
 7. runs verification commands without a shell;
-8. reloads the ready project configuration, rejects any verifier-time session-state change, and rechecks the clean frozen configuration, commit budget, protected harness history, and path scope against the original pinned session contract;
-9. records the exact Git-visible state, final session budget, and configuration digest that passed.
+8. reloads the committed project configuration from `HEAD`, rejects any verifier-time session-state change, and rechecks the clean frozen configuration, commit budget, protected harness history, and path scope against the original pinned session contract;
+9. records the exact Git-visible state, final session budget, and committed configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
-- `.ekzd/project.toml` remains committed, clean, and identical to the active-session and verified configuration;
+- `.ekzd/project.toml` remains committed, clean, regular, and identical to the active-session and verified committed configuration;
 - the local session state remains untracked;
 - the session remains within its original commit budget;
 - neither protected harness path appears in the active session's commit history;
@@ -171,11 +171,11 @@ EkzD treats verification and acceptance as different stages.
 
 Acceptance requires the current Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
 
-The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean and is protected from active-session commits.
+The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
 
 ## Context and handoff
 
-`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the context as structured data for prompt generators and other tools. When a session is active, EkzD refuses to render context if the canonical `.ekzd/project.toml` is dirty, staged, uncommitted, historically touched during the session, or no longer matches the session-start digest. This keeps the prompt-generator bridge bound to the same frozen contract that verification will later enforce.
+`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the context as structured data for prompt generators and other tools. When a session is active, EkzD refuses to render context if the canonical `.ekzd/project.toml` is dirty, staged, uncommitted, historically touched during the session, or no longer matches the session-start committed digest. The rendered contract itself is parsed from `HEAD:.ekzd/project.toml`, keeping the prompt-generator bridge bound to the same committed contract that verification and acceptance enforce.
 
 The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
 
