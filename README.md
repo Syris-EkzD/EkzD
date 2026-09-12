@@ -130,7 +130,9 @@ timeout_seconds = 600
 
 Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
 
-`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a session unless that file already exists in `HEAD` as a regular tracked file and has no staged or unstaged changes. For an active session, EkzD parses and hashes the raw `HEAD:.ekzd/project.toml` blob rather than the worktree copy, so clean/smudge filters, line-ending conversion, or other checkout transformations cannot redefine the contract. `ekzd context`, `ekzd verify`, and `ekzd finish --accept` all use that committed contract while continuing to require the worktree/index path to remain clean.
+`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a session unless that file already exists in `HEAD` as a regular tracked file and has no staged or unstaged changes. For an active session, EkzD parses and hashes the raw `HEAD:.ekzd/project.toml` blob rather than the worktree copy, so ordinary checkout transformations such as line-ending conversion cannot redefine the contract. `ekzd context`, `ekzd verify`, and `ekzd finish --accept` all use that committed contract while continuing to require the worktree/index path to remain clean.
+
+V1 deliberately rejects any tracked path with an active Git `filter` attribute. Clean/smudge filters can make Git's diff representation differ from the actual worktree bytes that verification commands execute, weakening scope and exact-state guarantees. This means Git LFS and repositories that rely on custom tracked-file filters are not supported by EkzD V1. Remove those filter attributes or use a conventional checkout before starting or verifying a session.
 
 Changing scope, authority, sources, session policy, acceptance criteria, verification commands, or any other project harness configuration therefore requires ending the current session first. Abort or finish the session, edit and commit `.ekzd/project.toml`, then start a fresh session. Any active-session commit that touches `.ekzd/project.toml` permanently invalidates that session even if a later commit restores the exact original bytes.
 
@@ -149,29 +151,31 @@ EkzD treats verification and acceptance as different stages.
 1. validates the committed project configuration;
 2. requires `.ekzd/project.toml` to remain the clean regular tracked contract captured when the session started;
 3. requires the active session state to remain local and untracked;
-4. enforces the active session's commit budget;
-5. rejects any active-session commit history that touches `.ekzd/project.toml` or `.ekzd/session.json`, independently of project scope;
-6. checks changed paths against `scope.include` and `scope.exclude` before verification;
-7. runs verification commands without a shell;
-8. reloads the committed project configuration from `HEAD`, rejects any verifier-time session-state change, and rechecks the clean frozen configuration, commit budget, protected harness history, and path scope against the original pinned session contract;
-9. records the exact Git-visible state, final session budget, and committed configuration digest that passed.
+4. rejects Git visibility features unsupported by V1, including `assume-unchanged`, `skip-worktree`, and tracked-file `filter` attributes;
+5. enforces the active session's commit budget;
+6. rejects any active-session commit history that touches `.ekzd/project.toml` or `.ekzd/session.json`, independently of project scope;
+7. checks changed paths against `scope.include` and `scope.exclude` before verification;
+8. runs verification commands without a shell;
+9. reloads the committed project configuration from `HEAD`, rejects any verifier-time session-state change, and rechecks the clean frozen configuration, commit budget, protected harness history, supported Git visibility, and path scope against the original pinned session contract;
+10. records the exact supported Git-visible state, final session budget, and committed configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
 - `.ekzd/project.toml` remains committed, clean, regular, and identical to the active-session and verified committed configuration;
 - the local session state remains untracked;
+- unsupported Git visibility features such as hidden index flags or tracked-file filters are absent;
 - the session remains within its original commit budget;
 - neither protected harness path appears in the active session's commit history;
-- the Git HEAD, branch, worktree state, and Git-visible file contents still match the verified state;
+- the Git HEAD, branch, worktree state, and supported Git-visible file contents still match the verified state;
 - scope rules still pass; and
 - the operator explicitly supplies `--accept` after the required review.
 
 `--accept` is an operator attestation. V1 does not authenticate who typed the command or cryptographically prove that a particular human performed the review.
 
-Acceptance requires the current Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
+Acceptance requires the current supported Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
 
-The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
+The exact-state fingerprint covers tracked, staged, unstaged, and untracked state under V1's supported conventional Git checkout model. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. Tracked files using content filters are rejected rather than fingerprinted through a potentially transformed Git view. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
 
 ## Context and handoff
 
@@ -179,7 +183,7 @@ The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and un
 
 The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
 
-Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: canonical configuration integrity, protected harness-history integrity, local session-state integrity, Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
+Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: canonical configuration integrity, protected harness-history integrity, local session-state integrity, supported Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
 
 `ekzd handoff` records semantic progress (`--done`) and next actions (`--next`) in the local session state. It does not modify project documentation automatically.
 
@@ -188,6 +192,7 @@ Likewise, free-text authority and constraint entries are contextual instructions
 V1 deliberately stays small:
 
 - single-operator personal workflow rather than multi-user configuration ownership;
+- conventional Git checkout only: no custom tracked-file content filters or Git LFS, no `assume-unchanged`, and no `skip-worktree`/sparse-checkout state;
 - no daemon;
 - no database;
 - no model/API integration;
