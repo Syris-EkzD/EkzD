@@ -53,6 +53,28 @@ def ensure_session_state_untracked(root: Path) -> None:
         raise HarnessError("EkzD session state must remain local and untracked.")
 
 
+def hidden_index_paths(root: Path) -> list[str]:
+    hidden: set[str] = set()
+    for entry in run_git_bytes(root, "ls-files", "-v", "-z").split(b"\0"):
+        if not entry:
+            continue
+        if len(entry) < 3 or entry[1:2] != b" ":
+            raise HarnessError("Unable to parse Git index visibility flags.")
+        tag = entry[:1]
+        if tag == b"S" or tag.islower():
+            hidden.add(entry[2:].decode("utf-8", errors="surrogateescape"))
+    return sorted(hidden)
+
+
+def ensure_index_paths_visible(root: Path) -> None:
+    hidden = hidden_index_paths(root)
+    if hidden:
+        raise HarnessError(
+            "Git index flags hide tracked paths from EkzD; clear assume-unchanged/skip-worktree before continuing:\n- "
+            + "\n- ".join(hidden)
+        )
+
+
 def find_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
@@ -193,6 +215,7 @@ def session_state_digest(root: Path) -> str:
 
 
 def git_state(root: Path) -> dict[str, Any]:
+    ensure_index_paths_visible(root)
     return {
         "head": run_git(root, "rev-parse", "HEAD"),
         "branch": run_git(root, "branch", "--show-current") or "(detached)",
@@ -201,6 +224,7 @@ def git_state(root: Path) -> dict[str, Any]:
 
 
 def git_state_fingerprint(root: Path) -> str:
+    ensure_index_paths_visible(root)
     digest = hashlib.sha256()
     components = (
         ("head", ("rev-parse", "HEAD")),
@@ -340,9 +364,21 @@ def _decode_git_paths(output: bytes) -> set[str]:
 
 
 def changed_paths(root: Path, *, start_head: str | None = None) -> list[str]:
+    ensure_index_paths_visible(root)
     committed: set[str] = set()
     if start_head is not None:
-        committed = _decode_git_paths(run_git_bytes(root, "diff", "--name-only", "--no-renames", "-z", start_head, "HEAD"))
+        committed = _decode_git_paths(
+            run_git_bytes(
+                root,
+                "log",
+                "-m",
+                "--format=",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                f"{start_head}..HEAD",
+            )
+        )
     tracked = _decode_git_paths(run_git_bytes(root, "diff", "--name-only", "--no-renames", "-z"))
     staged = _decode_git_paths(run_git_bytes(root, "diff", "--cached", "--name-only", "--no-renames", "-z"))
     untracked = _decode_git_paths(run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z"))
