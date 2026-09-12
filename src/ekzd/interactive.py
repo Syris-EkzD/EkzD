@@ -33,6 +33,17 @@ def _confirm(input_fn: Callable[[str], str], prompt: str) -> bool:
     return _read(input_fn, f"{prompt} [y/N]: ").strip().lower() in {"y", "yes"}
 
 
+def _implementation_ready(status: dict[str, object]) -> bool:
+    if status.get("current_branch") != status.get("implementation_branch"):
+        return False
+    commit_count = status.get("commit_count")
+    return (
+        status.get("head") != status.get("baseline_head")
+        or status.get("worktree_clean") is False
+        or (isinstance(commit_count, int) and commit_count > 0)
+    )
+
+
 def _actions_for(status: dict[str, object]) -> list[tuple[str, str]]:
     if status.get("session_status") != "active":
         actions = [("start", "Start task")]
@@ -51,13 +62,18 @@ def _actions_for(status: dict[str, object]) -> list[tuple[str, str]]:
             ("abort", "Abort task"),
             ("exit", "Exit"),
         ]
-    return [
-        ("prompt", "Generate implementation prompt"),
-        ("verify", "Verify changes"),
-        ("view", "View task"),
-        ("abort", "Abort task"),
-        ("exit", "Exit"),
-    ]
+
+    actions = [("prompt", "Generate implementation prompt")]
+    if _implementation_ready(status):
+        actions.append(("verify", "Verify changes"))
+    actions.extend(
+        [
+            ("view", "View task"),
+            ("abort", "Abort task"),
+            ("exit", "Exit"),
+        ]
+    )
+    return actions
 
 
 def _write_line(output: TextIO, message: str = "") -> None:
@@ -70,9 +86,11 @@ def run_interactive(
     enabled: bool,
     input_fn: Callable[[str], str] | None = None,
     output: TextIO | None = None,
+    error_output: TextIO | None = None,
 ) -> int:
     input_fn = input if input_fn is None else input_fn
     output = sys.stdout if output is None else output
+    error_output = sys.stderr if error_output is None else error_output
 
     try:
         while True:
@@ -160,7 +178,7 @@ def run_interactive(
                         )
                     )
             except HarnessError as exc:
-                _write_line(output, failure(f"EkzD: {exc}", enabled=enabled))
+                _write_line(error_output, failure(f"EkzD: {exc}", enabled=enabled))
     except (_ExitInteractive, KeyboardInterrupt):
         _write_line(output)
         _write_line(output, info("Exited.", enabled=enabled))

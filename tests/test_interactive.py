@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from ekzd import interactive
+from ekzd.core import HarnessError
 
 ROOT = Path("/repo")
 
@@ -27,12 +28,24 @@ def active_status(verification: str = "not run") -> dict[str, object]:
         "implementation_branch": "feat/demo",
         "current_branch": "feat/demo",
         "baseline_head": "1234567890abcdef",
-        "head": "1234567890abcdef",
+        "head": "fedcba0987654321",
         "worktree_clean": True,
-        "commit_count": 0,
+        "commit_count": 1,
         "max_commits": 3,
         "blocked_reason": "blocked" if verification == "blocked" else None,
     }
+
+
+def fresh_status() -> dict[str, object]:
+    status = active_status()
+    status.update(
+        current_branch="main",
+        head=status["baseline_head"],
+        worktree_clean=True,
+        commit_count=0,
+        next="Generate the frozen implementation handoff with `ekzd prompt`.",
+    )
+    return status
 
 
 CONTEXT = {"project": {"name": "Demo"}}
@@ -62,6 +75,16 @@ class InteractiveTests(unittest.TestCase):
         self.assertIn("View task", output)
         self.assertIn("Abort task", output)
         self.assertIn("Exit", output)
+
+    def test_fresh_session_does_not_offer_verification_until_implementation_ready(self) -> None:
+        code, output = self._run(fresh_status(), ["4"])
+        self.assertEqual(0, code)
+        self.assertIn("Generate implementation prompt", output)
+        self.assertNotIn("Verify changes", output)
+
+        code, output = self._run(active_status(), ["5"])
+        self.assertEqual(0, code)
+        self.assertIn("Verify changes", output)
 
     def test_state_aware_passed_actions_offer_acceptance_not_prompt_or_verify(self) -> None:
         code, output = self._run(active_status("passed"), ["4"])
@@ -110,6 +133,31 @@ class InteractiveTests(unittest.TestCase):
         ):
             code = interactive.run_interactive(ROOT, enabled=False, input_fn=interrupt, output=output)
         self.assertEqual(0, code)
+        self.assertIn("Exited.", output.getvalue())
+
+    def test_harness_error_uses_error_stream_and_shell_remains_usable(self) -> None:
+        output = io.StringIO()
+        error_output = io.StringIO()
+        values = iter(["1", "5"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=active_status()),
+            mock.patch.object(
+                interactive,
+                "build_implementation_prompt",
+                side_effect=HarnessError("blocked"),
+            ),
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: next(values),
+                output=output,
+                error_output=error_output,
+            )
+        self.assertEqual(0, code)
+        self.assertIn("EkzD: blocked", error_output.getvalue())
+        self.assertNotIn("EkzD: blocked", output.getvalue())
         self.assertIn("Exited.", output.getvalue())
 
     def test_abort_requires_explicit_confirmation(self) -> None:
