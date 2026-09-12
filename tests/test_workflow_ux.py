@@ -158,6 +158,48 @@ class WorkflowUxTests(unittest.TestCase):
         self.assertIn("Repository: github.com/example/demo", prompt)
         self.assertNotIn("git@", prompt)
 
+    def test_prompt_sanitizes_query_and_fragment_from_scp_style_origin(self) -> None:
+        self._git(
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:example/demo.git?token=SUPER_SECRET#fragment",
+        )
+        state = self._start()
+
+        prompt = build_implementation_prompt(self.root)
+        identifier = state["workflow"]["repository"]["identifier"]
+
+        self.assertEqual("github.com/example/demo", identifier)
+        self.assertIn("Repository: github.com/example/demo", prompt)
+        self.assertNotIn("SUPER_SECRET", identifier)
+        self.assertNotIn("token=", identifier)
+        self.assertNotIn("fragment", identifier)
+        self.assertNotIn("SUPER_SECRET", prompt)
+        self.assertNotIn("token=", prompt)
+        self.assertNotIn("fragment", prompt)
+
+    def test_prompt_sanitizes_query_and_fragment_from_hostless_url_origin(self) -> None:
+        self._git(
+            "remote",
+            "set-url",
+            "origin",
+            "file:///tmp/demo.git?token=SUPER_SECRET#fragment",
+        )
+        state = self._start()
+
+        prompt = build_implementation_prompt(self.root)
+        identifier = state["workflow"]["repository"]["identifier"]
+
+        self.assertEqual("file:///tmp/demo", identifier)
+        self.assertIn("Repository: file:///tmp/demo", prompt)
+        self.assertNotIn("SUPER_SECRET", identifier)
+        self.assertNotIn("token=", identifier)
+        self.assertNotIn("fragment", identifier)
+        self.assertNotIn("SUPER_SECRET", prompt)
+        self.assertNotIn("token=", prompt)
+        self.assertNotIn("fragment", prompt)
+
     def test_repository_identity_is_frozen_when_origin_changes_or_disappears(self) -> None:
         self._start()
         first = build_implementation_prompt(self.root)
