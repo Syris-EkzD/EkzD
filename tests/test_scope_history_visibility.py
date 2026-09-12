@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, start_session, verify_session
+from ekzd.core import HarnessError, abort_session, start_session, verify_session
 
 
 def config_text() -> str:
@@ -85,6 +85,36 @@ class ScopeHistoryVisibilityTests(unittest.TestCase):
 
         self.assertEqual("", subprocess.run(["git", "diff", "HEAD~2", "HEAD", "--", "secret.txt"], cwd=self.root, text=True, capture_output=True, check=True).stdout)
         with self.assertRaisesRegex(HarnessError, "secret.txt: outside scope.include"):
+            verify_session(self.root)
+
+    def test_session_state_cannot_enter_session_history_even_if_untracked_again(self) -> None:
+        subprocess.run(["git", "add", "-f", ".ekzd/session.json"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "temporarily track session state"], cwd=self.root, check=True)
+        subprocess.run(["git", "rm", "--cached", ".ekzd/session.json"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "restore local session state"], cwd=self.root, check=True)
+
+        self.assertTrue((self.root / ".ekzd/session.json").is_file())
+        self.assertEqual("", subprocess.run(["git", "ls-files", "--", ".ekzd/session.json"], cwd=self.root, text=True, capture_output=True, check=True).stdout)
+        with self.assertRaisesRegex(HarnessError, "Protected EkzD harness files were committed"):
+            verify_session(self.root)
+
+    def test_project_config_cannot_enter_session_history_even_if_restored(self) -> None:
+        abort_session(self.root)
+        config = self.root / ".ekzd/project.toml"
+        repo_wide = config_text().replace('include = ["README.md"]', 'include = ["*"]')
+        config.write_text(repo_wide, encoding="utf-8")
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "configure repo-wide scope"], cwd=self.root, check=True)
+        start_session(self.root, "Protect the frozen harness contract")
+
+        config.write_text(repo_wide + "\n# temporary session edit\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "temporarily change harness config"], cwd=self.root, check=True)
+        config.write_text(repo_wide, encoding="utf-8")
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "restore harness config"], cwd=self.root, check=True)
+
+        with self.assertRaisesRegex(HarnessError, "Protected EkzD harness files were committed"):
             verify_session(self.root)
 
 
