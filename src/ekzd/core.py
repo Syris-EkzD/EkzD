@@ -442,6 +442,7 @@ def verify_session(root: Path) -> dict[str, Any]:
         if not result["passed"]:
             break
 
+    paths = enforce_scope(root, config, start_head=_session_start_head(state))
     passed = len(results) == len(config["verification"]["steps"]) and all(item["passed"] for item in results)
     verification = {
         "verified_at": utc_now(),
