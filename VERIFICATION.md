@@ -27,6 +27,8 @@ Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git renam
 
 `.ekzd/project.toml` is V1's canonical project contract. Before `ekzd start`, it must already exist in `HEAD` and must have no staged or unstaged changes. V1 intentionally does not support starting a session from an untracked, staged-only, or locally dirty project contract.
 
+The canonical contract must be a regular tracked file; symlinked `.ekzd/project.toml` contracts are not supported because Git would otherwise version only the link target string rather than the TOML contents EkzD reads.
+
 This gives the single-operator workflow one reproducible definition of scope, authority, sources, session policy, acceptance criteria, and verification commands. HEAD, the Git index, the working tree, `ekzd context --json`, local verification, and CI are not allowed to silently disagree about which project contract is authoritative.
 
 When `ekzd start` creates a session, it records the digest of the complete committed `.ekzd/project.toml` file. While that session is active, `ekzd context`, `ekzd verify`, and `ekzd finish --accept` require the file to remain clean and to match the recorded digest. If configuration must change, abort or finish the session first, edit and commit the configuration outside an active session, then start a fresh session.
