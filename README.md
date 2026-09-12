@@ -4,7 +4,7 @@ EkzD is a small, project-agnostic development harness for scoped and verifiable 
 
 It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working contract for a task, expose that contract to the tools or people doing the work, keep each session bounded, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
 
-EkzD is deliberately not the code generator. In the intended V1 workflow, an AI coding session, Codex, or a human produces the changes; EkzD provides the contract and deterministic acceptance gate around that work.
+EkzD is deliberately not the code generator. In the intended V1 workflow, an AI coding session, Codex, or a human produces the changes; EkzD provides the contract and deterministic acceptance gate around that work. V1 is optimized for a single-operator personal workflow rather than a multi-user policy platform.
 
 ## Recommended V1 workflow
 
@@ -12,6 +12,8 @@ EkzD V1 is designed to work well with separate planning/prompt-generation and co
 
 ```text
 You define the objective
+        ↓
+configure + commit .ekzd/project.toml
         ↓
 ekzd start "..."
         ↓
@@ -71,7 +73,7 @@ ekzd abort
 
 `abort` changes only local EkzD session state. It does not revert project files, commits, or Git history, and it never records acceptance.
 
-`ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. The project configuration is committed; session state is local and disposable.
+`ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. Before `ekzd start`, configure and commit `.ekzd/project.toml`; V1 requires that canonical project contract to already exist in `HEAD` with no staged or unstaged changes. Session state remains local and disposable.
 
 ## Terminal interface
 
@@ -128,7 +130,9 @@ timeout_seconds = 600
 
 Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
 
-The complete `.ekzd/project.toml` digest is captured when a session starts. Changing scope, authority, session policy, acceptance criteria, verification commands, or any other project harness configuration during an active session invalidates that session. In addition to the current-byte digest check, `.ekzd/project.toml` is a protected harness-history path: any commit made during the active session that touches it permanently invalidates that session, even if a later commit restores the exact original bytes. Abort the session, make and commit the configuration change outside an active session, then start a fresh session.
+`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a session unless that file already exists in `HEAD` and has no staged or unstaged changes. Once the session is active, `ekzd context`, `ekzd verify`, and `ekzd finish --accept` require the config to remain clean and to match the complete file digest captured at session start. This intentionally avoids separate HEAD/index/worktree versions of the contract.
+
+Changing scope, authority, sources, session policy, acceptance criteria, verification commands, or any other project harness configuration therefore requires ending the current session first. Abort or finish the session, edit and commit `.ekzd/project.toml`, then start a fresh session. Any active-session commit that touches `.ekzd/project.toml` permanently invalidates that session even if a later commit restores the exact original bytes.
 
 The two V1 protected harness-history paths are exactly `.ekzd/project.toml` and `.ekzd/session.json`. Their protection is independent of `scope.include` and `scope.exclude`; even `include = ["*"]` cannot authorize committing either path during an active session. This is intentionally narrower than protecting the entire `.ekzd/` directory so future non-trust-critical EkzD artifacts can evolve without inheriting an unnecessary blanket restriction.
 
@@ -143,19 +147,19 @@ EkzD treats verification and acceptance as different stages.
 `ekzd verify`:
 
 1. validates the project configuration;
-2. requires it to match the configuration captured when the session started;
+2. requires `.ekzd/project.toml` to remain the clean committed contract captured when the session started;
 3. requires the active session state to remain local and untracked;
 4. enforces the active session's commit budget;
 5. rejects any active-session commit history that touches `.ekzd/project.toml` or `.ekzd/session.json`, independently of project scope;
 6. checks changed paths against `scope.include` and `scope.exclude` before verification;
 7. runs verification commands without a shell;
-8. reloads the ready project configuration, rejects any verifier-time session-state change, and rechecks the frozen configuration, commit budget, protected harness history, and path scope against the original pinned session contract;
+8. reloads the ready project configuration, rejects any verifier-time session-state change, and rechecks the clean frozen configuration, commit budget, protected harness history, and path scope against the original pinned session contract;
 9. records the exact Git-visible state, final session budget, and configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
-- the project configuration still matches the active session and the verified configuration;
+- `.ekzd/project.toml` remains committed, clean, and identical to the active-session and verified configuration;
 - the local session state remains untracked;
 - the session remains within its original commit budget;
 - neither protected harness path appears in the active session's commit history;
@@ -167,15 +171,15 @@ EkzD treats verification and acceptance as different stages.
 
 Acceptance requires the current Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
 
-The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is similarly protected from active-session commits in addition to its frozen digest check.
+The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean and is protected from active-session commits.
 
 ## Context and handoff
 
-`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the context as structured data for prompt generators and other tools.
+`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the context as structured data for prompt generators and other tools. When a session is active, EkzD refuses to render context if the canonical `.ekzd/project.toml` is dirty, staged, uncommitted, historically touched during the session, or no longer matches the session-start digest. This keeps the prompt-generator bridge bound to the same frozen contract that verification will later enforce.
 
 The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
 
-Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: configuration integrity, protected harness-history integrity, local session-state integrity, Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
+Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: canonical configuration integrity, protected harness-history integrity, local session-state integrity, Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
 
 `ekzd handoff` records semantic progress (`--done`) and next actions (`--next`) in the local session state. It does not modify project documentation automatically.
 
@@ -183,6 +187,7 @@ Likewise, free-text authority and constraint entries are contextual instructions
 
 V1 deliberately stays small:
 
+- single-operator personal workflow rather than multi-user configuration ownership;
 - no daemon;
 - no database;
 - no model/API integration;
