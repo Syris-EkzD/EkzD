@@ -2,7 +2,7 @@
 
 EkzD is a small, project-agnostic development harness for scoped and verifiable AI-assisted work.
 
-It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working frame for a task, expose the relevant project context, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
+It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working frame for a task, expose the relevant project context, keep each session bounded, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
 
 ## V1 commands
 
@@ -40,6 +40,9 @@ may = ["Edit scoped source and tests."]
 requires_approval = ["Merge to main."]
 may_not = ["Change secrets or deployment credentials."]
 
+[session]
+max_commits = 3
+
 [acceptance]
 criteria = [
   "Configured verification passes.",
@@ -55,6 +58,10 @@ timeout_seconds = 600
 
 Configuration is intentionally explicit. Empty acceptance criteria or an empty verification plan prevent a session from starting.
 
+`session.max_commits` is a hard session-size budget. `ekzd init` writes `3`, and V1 also treats a missing value as `3` for backward compatibility. Projects may choose another positive integer when a genuinely larger bounded task needs it. The configured value is captured when the session starts; it cannot be raised mid-session to excuse work that has already exceeded its original boundary.
+
+The intent is not to claim that a fourth commit automatically lowers code quality. The budget creates a practical stopping point before one objective grows into several loosely related tasks. Configure the budget to fit the project, but keep one EkzD session focused on one objective.
+
 ## Acceptance model
 
 EkzD treats verification and acceptance as different stages.
@@ -62,15 +69,17 @@ EkzD treats verification and acceptance as different stages.
 `ekzd verify`:
 
 1. validates the project configuration;
-2. checks changed paths against `scope.include` and `scope.exclude`;
-3. runs verification commands without a shell;
-4. records the exact Git/worktree state and configuration digest that passed.
+2. enforces the active session's commit budget;
+3. checks changed paths against `scope.include` and `scope.exclude`;
+4. runs verification commands without a shell;
+5. records the exact Git/worktree state, session budget, and configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
+- the session remains within its original commit budget;
 - the project configuration is unchanged since verification;
-- the Git HEAD, branch, and worktree state are unchanged since verification;
+- the Git HEAD, branch, worktree state, and Git-visible file contents are unchanged since verification;
 - scope rules still pass; and
 - a human explicitly supplies `--accept`.
 
@@ -78,7 +87,7 @@ Any change after verification invalidates acceptance until verification is rerun
 
 ## Context and handoff
 
-`ekzd context` renders the current objective, Git state, sources, scope, authority, acceptance criteria, and verification plan. `--json` provides the same information as structured data for other tools.
+`ekzd context` renders the current objective, session policy, Git state, sources, scope, authority, acceptance criteria, and verification plan. `--json` provides the same information as structured data for other tools.
 
 `ekzd handoff` records semantic progress (`--done`) and next actions (`--next`) in the local session state. It does not modify project documentation automatically.
 
