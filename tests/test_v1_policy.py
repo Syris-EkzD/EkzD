@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, abort_session, load_config, start_session, verify_session
+from ekzd.core import HarnessError, abort_session, build_context, load_config, start_session, verify_session
 
 
 CONFIG = """schema_version = 1
@@ -70,7 +70,54 @@ class V1PolicyTests(unittest.TestCase):
         config = self.root / ".ekzd/project.toml"
         config.write_text(CONFIG.replace('include = ["src/"]', 'include = ["*"]'), encoding="utf-8")
 
-        with self.assertRaisesRegex(HarnessError, "configuration changed after the session started"):
+        with self.assertRaisesRegex(HarnessError, "must remain clean"):
+            verify_session(self.root)
+
+    def test_context_rejects_config_changed_after_session_start(self) -> None:
+        start_session(self.root, "Keep exported context authoritative")
+        config = self.root / ".ekzd/project.toml"
+        config.write_text(
+            CONFIG.replace('may_not = ["Expand scope silently."]', 'may_not = []'),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(HarnessError, "must remain clean"):
+            build_context(self.root)
+
+    def test_verify_rejects_staged_config_with_original_worktree_restored(self) -> None:
+        config = self.root / ".ekzd/project.toml"
+        repo_wide = CONFIG.replace('include = ["src/"]', 'include = ["*"]')
+        config.write_text(repo_wide, encoding="utf-8")
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "configure repo-wide contract"], cwd=self.root, check=True)
+        start_session(self.root, "Reject staged contract drift")
+
+        changed = repo_wide.replace('may_not = ["Expand scope silently."]', 'may_not = []')
+        config.write_text(changed, encoding="utf-8")
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        config.write_text(repo_wide, encoding="utf-8")
+
+        self.assertEqual(
+            "",
+            subprocess.run(
+                ["git", "diff", "--name-only", "--", ".ekzd/project.toml"],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout,
+        )
+        self.assertIn(
+            ".ekzd/project.toml",
+            subprocess.run(
+                ["git", "diff", "--cached", "--name-only", "--", ".ekzd/project.toml"],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout,
+        )
+        with self.assertRaisesRegex(HarnessError, "must remain clean"):
             verify_session(self.root)
 
     def test_abort_recovers_over_budget_session_without_acceptance(self) -> None:
