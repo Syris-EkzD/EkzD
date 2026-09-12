@@ -253,12 +253,15 @@ def config_digest(root: Path) -> str:
     return hashlib.sha256((root / CONFIG_RELATIVE).read_bytes()).hexdigest()
 
 
-def changed_paths(root: Path) -> list[str]:
+def changed_paths(root: Path, *, start_head: str | None = None) -> list[str]:
+    committed = set()
+    if start_head is not None:
+        committed = set(run_git(root, "diff", "--name-only", start_head, "HEAD").splitlines())
     tracked = set(run_git(root, "diff", "--name-only", "HEAD").splitlines())
     staged = set(run_git(root, "diff", "--cached", "--name-only").splitlines())
     untracked = set(run_git(root, "ls-files", "--others", "--exclude-standard").splitlines())
     ignored = {STATE_RELATIVE.as_posix()}
-    return sorted(path for path in tracked | staged | untracked if path and path not in ignored)
+    return sorted(path for path in committed | tracked | staged | untracked if path and path not in ignored)
 
 
 def _matches_scope(path: str, pattern: str) -> bool:
@@ -268,8 +271,8 @@ def _matches_scope(path: str, pattern: str) -> bool:
     return fnmatch.fnmatchcase(path, pattern)
 
 
-def enforce_scope(root: Path, config: dict[str, Any]) -> list[str]:
-    paths = changed_paths(root)
+def enforce_scope(root: Path, config: dict[str, Any], *, start_head: str | None = None) -> list[str]:
+    paths = changed_paths(root, start_head=start_head)
     scope = config.get("scope", {})
     include = scope.get("include", [])
     exclude = scope.get("exclude", [])
@@ -291,10 +294,17 @@ def _active_state(root: Path) -> dict[str, Any]:
     return state
 
 
+def _session_start_head(state: dict[str, Any]) -> str:
+    start_git = state.get("start_git")
+    if not isinstance(start_git, dict) or not isinstance(start_git.get("head"), str) or not start_git["head"]:
+        raise HarnessError("Active session is missing its starting Git HEAD.")
+    return start_git["head"]
+
+
 def verify_session(root: Path) -> dict[str, Any]:
     config = load_config(root, ready=True)
     state = _active_state(root)
-    paths = enforce_scope(root, config)
+    paths = enforce_scope(root, config, start_head=_session_start_head(state))
     results: list[dict[str, Any]] = []
     for step in config["verification"]["steps"]:
         cwd = (root / step.get("cwd", ".")).resolve()
@@ -364,7 +374,7 @@ def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
     current_git = git_state(root)
     if verification.get("git") != current_git:
         raise HarnessError("Acceptance blocked: Git/worktree state changed after verification.")
-    enforce_scope(root, config)
+    enforce_scope(root, config, start_head=_session_start_head(state))
     acceptance = {
         "accepted_at": utc_now(),
         "criteria": list(config["acceptance"]["criteria"]),
