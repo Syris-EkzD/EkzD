@@ -145,19 +145,21 @@ EkzD treats verification and acceptance as different stages.
 3. enforces the active session's commit budget;
 4. checks changed paths against `scope.include` and `scope.exclude` before verification;
 5. runs verification commands without a shell;
-6. checks scope again after verification so verifier-created side effects cannot silently escape the declared scope;
-7. records the exact Git-visible state, session budget, and configuration digest that passed.
+6. reloads the ready project configuration and active session after the commands finish, then rechecks the frozen configuration, commit budget, and path scope;
+7. records the exact Git-visible state, final session budget, and configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
 - the project configuration still matches the active session and the verified configuration;
 - the session remains within its original commit budget;
-- the Git HEAD, branch, worktree state, and Git-visible file contents are unchanged since verification;
+- the Git HEAD, branch, worktree state, and Git-visible file contents still match the verified state;
 - scope rules still pass; and
-- a human explicitly supplies `--accept`.
+- the operator explicitly supplies `--accept` after the required review.
 
-Any Git-visible change after verification invalidates acceptance until verification is rerun. A green command result is evidence, not automatic approval.
+`--accept` is an operator attestation. V1 does not authenticate who typed the command or cryptographically prove that a particular human performed the review.
+
+Acceptance requires the current Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
 
 The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them.
 
