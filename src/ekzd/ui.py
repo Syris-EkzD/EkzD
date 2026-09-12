@@ -298,12 +298,59 @@ def render_context_ui(context: dict[str, Any], *, enabled: bool) -> str:
 
 
 def _clip_terminal_value(value: object, limit: int) -> str:
-    text = str(value)
+    text = " ".join(str(value).split())
     if len(text) <= limit:
         return text
     if limit <= 1:
         return text[:limit]
     return text[: limit - 1] + "…"
+
+
+def _terminal_card_row(
+    label: str,
+    value: object,
+    *,
+    content_width: int,
+    enabled: bool,
+) -> str:
+    label_width = min(12, max(1, content_width // 3))
+    value_width = max(1, content_width - label_width - 1)
+    label_text = f"{label:<{label_width}}"
+    value_text = f"{_clip_terminal_value(value, value_width):<{value_width}}"
+    return f"│ {muted(label_text, enabled=enabled)} {value_text} │"
+
+
+def _terminal_summary_row(
+    status: dict[str, object],
+    *,
+    content_width: int,
+    enabled: bool,
+) -> str:
+    session_status = str(status.get("session_status") or "none")
+    verification = str(status.get("verification") or "not run")
+    commit_count = status.get("commit_count")
+    max_commits = status.get("max_commits")
+    commit_label = "?" if commit_count is None else str(commit_count)
+    commit_value = "?" if max_commits is None else f"{commit_label}/{max_commits}"
+    plain = f"session {session_status}   verification {verification}   commits {commit_value}"
+
+    if len(plain) > content_width:
+        clipped = _clip_terminal_value(plain, content_width)
+        return f"│ {clipped:<{content_width}} │"
+
+    if session_status in {"active", "finished"}:
+        session_value = paint(session_status, GREEN, enabled=enabled)
+    elif session_status == "aborted":
+        session_value = paint(session_status, YELLOW, enabled=enabled)
+    else:
+        session_value = muted(session_status, enabled=enabled)
+
+    rendered = (
+        f"{muted('session', enabled=enabled)} {session_value}   "
+        f"{muted('verification', enabled=enabled)} {_verification_value(verification, enabled=enabled)}   "
+        f"{muted('commits', enabled=enabled)} {commit_value}"
+    )
+    return f"│ {rendered}{' ' * (content_width - len(plain))} │"
 
 
 def render_terminal_header(
@@ -313,39 +360,67 @@ def render_terminal_header(
     width: int,
     enabled: bool,
 ) -> str:
-    value_width = max(16, width - 16)
-    session_status = str(status.get("session_status") or "none")
-    verification = status.get("verification")
-    commit_count = status.get("commit_count")
-    max_commits = status.get("max_commits")
+    card_width = max(4, width - 1)
+    content_width = max(1, card_width - 4)
+    title = "EkzD"
+    title_prefix = f"┌─ {title} "
+    top = (
+        f"┌─ {paint(title, BOLD, CYAN, enabled=enabled)} "
+        + "─" * max(0, card_width - len(title_prefix) - 1)
+        + "┐"
+    )
+    bottom = "└" + "─" * max(0, card_width - 2) + "┘"
 
-    if session_status in {"active", "finished"}:
-        session_value = paint(session_status, GREEN, enabled=enabled)
-    elif session_status == "aborted":
-        session_value = paint(session_status, YELLOW, enabled=enabled)
-    else:
-        session_value = muted(session_status, enabled=enabled)
-
-    summary = [f"{muted('session', enabled=enabled)} {session_value}"]
-    if verification is not None:
-        summary.append(
-            f"{muted('verification', enabled=enabled)} "
-            f"{_verification_value(str(verification), enabled=enabled)}"
-        )
-    if max_commits is not None:
-        commit_label = "?" if commit_count is None else str(commit_count)
-        summary.append(f"{muted('commits', enabled=enabled)} {commit_label}/{max_commits}")
-
-    lines = [header(_clip_terminal_value(project, value_width), enabled=enabled), "  ".join(summary)]
+    lines = [
+        top,
+        _terminal_card_row("project", project, content_width=content_width, enabled=enabled),
+    ]
     objective = status.get("objective")
     if objective:
-        lines.append(_meta("task", _clip_terminal_value(objective, value_width), enabled=enabled))
+        lines.append(_terminal_card_row("task", objective, content_width=content_width, enabled=enabled))
     branch = status.get("current_branch")
     if branch:
-        lines.append(_meta("branch", _clip_terminal_value(branch, value_width), enabled=enabled))
+        lines.append(_terminal_card_row("branch", branch, content_width=content_width, enabled=enabled))
+    lines.append(_terminal_summary_row(status, content_width=content_width, enabled=enabled))
     next_action = status.get("next")
     if next_action:
-        lines.append(_meta("next", _clip_terminal_value(next_action, value_width), enabled=enabled))
+        lines.append(_terminal_card_row("next", next_action, content_width=content_width, enabled=enabled))
+    lines.append(bottom)
+    return "\n".join(lines) + "\n"
+
+
+def render_terminal_task_details(status: dict[str, object], *, enabled: bool) -> str:
+    lines = [_section("Task details", enabled=enabled)]
+    objective = status.get("objective")
+    if objective:
+        lines.extend(["", _section("Objective", enabled=enabled), f"  {objective}"])
+    lines.extend(
+        [
+            "",
+            _section("Branches", enabled=enabled),
+            _meta("baseline", str(status.get("baseline_branch") or "(unknown)"), enabled=enabled),
+            _meta(
+                "implementation",
+                str(status.get("implementation_branch") or "(unknown)"),
+                enabled=enabled,
+            ),
+            "",
+            _section("Repository", enabled=enabled),
+            _meta(
+                "baseline HEAD",
+                str(status.get("baseline_head") or "")[:12] or "(unknown)",
+                enabled=enabled,
+            ),
+            _meta(
+                "worktree",
+                "clean" if status.get("worktree_clean") else "changed",
+                enabled=enabled,
+            ),
+        ]
+    )
+    blocked_reason = status.get("blocked_reason")
+    if blocked_reason:
+        lines.extend(["", _section("Blocked", enabled=enabled), f"  {blocked_reason}"])
     return "\n".join(lines) + "\n"
 
 

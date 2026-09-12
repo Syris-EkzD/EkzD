@@ -11,6 +11,9 @@ from ekzd.core import HarnessError
 from ekzd.terminal import (
     ALT_SCREEN_ENTER,
     ALT_SCREEN_EXIT,
+    ALT_SCROLL_DISABLE,
+    ALT_SCROLL_RESTORE,
+    ALT_SCROLL_SAVE,
     CLEAR_SCREEN,
     CURSOR_HOME,
     TerminalCapabilities,
@@ -70,6 +73,10 @@ class RecordingTerminal:
         self.frames.append((header, actions, list(self.history)))
 
 
+class PlainRecordingTerminal(RecordingTerminal):
+    persistent = False
+
+
 class TerminalTests(unittest.TestCase):
     def test_supported_posix_tty_uses_screen_control_and_alt_screen(self) -> None:
         capabilities = detect_terminal_capabilities(
@@ -120,31 +127,63 @@ class TerminalTests(unittest.TestCase):
                 raise RuntimeError("boom")
         self.assertTrue(output.getvalue().endswith(ALT_SCREEN_EXIT))
 
+    def test_alternate_scroll_mode_is_disabled_and_restored_symmetrically(self) -> None:
+        output = io.StringIO()
+        capabilities = TerminalCapabilities(True, True, 94, 46)
+        with TerminalSession(output, capabilities=capabilities):
+            pass
+        text = output.getvalue()
+        self.assertLess(text.index(ALT_SCROLL_SAVE), text.index(ALT_SCROLL_DISABLE))
+        self.assertLess(text.index(ALT_SCROLL_DISABLE), text.index(ALT_SCREEN_ENTER))
+        self.assertLess(text.index(ALT_SCROLL_RESTORE), text.index(ALT_SCREEN_EXIT))
+
     def test_redraw_keeps_header_at_top_and_recent_activity_visible(self) -> None:
         output = io.StringIO()
-        capabilities = TerminalCapabilities(True, True, 80, 10)
+        capabilities = TerminalCapabilities(True, True, 80, 18)
         with TerminalSession(output, capabilities=capabilities) as session:
             for index in range(10):
                 session.append(f"line {index}")
-            session.redraw("EkzD · Demo\nsession active\n", "Actions\n  1. Exit\n")
+            session.redraw("┌─ EkzD ─┐\n│ Demo    │\n└─────────┘\n", "Actions\n  1. Exit\n")
         last_frame = output.getvalue().split(CLEAR_SCREEN + CURSOR_HOME)[-1]
-        self.assertTrue(last_frame.startswith("EkzD · Demo"))
+        self.assertTrue(last_frame.startswith("┌─ EkzD"))
         self.assertIn("line 9", last_frame)
         self.assertIn("Actions", last_frame)
 
-    def test_header_contains_useful_state_without_contract_dump(self) -> None:
+    def test_header_is_framed_and_contains_useful_state(self) -> None:
         rendered = render_terminal_header("Demo", STATUS, width=100, enabled=False)
+        lines = rendered.rstrip("\n").splitlines()
+        self.assertTrue(lines[0].startswith("┌─ EkzD "))
+        self.assertTrue(lines[-1].startswith("└"))
+        self.assertTrue(all(line.startswith(("┌", "│", "└")) for line in lines))
         for expected in (
-            "EkzD · Demo",
+            "project",
+            "Demo",
+            "task",
+            "Do one thing",
+            "branch",
+            "feat/demo",
             "session active",
             "verification not run",
             "commits 1/3",
-            "task  Do one thing",
-            "branch  feat/demo",
-            "next  Verify when ready.",
+            "next",
+            "Verify when ready.",
         ):
             self.assertIn(expected, rendered)
         self.assertNotIn("baseline_head", rendered)
+
+    def test_long_header_values_are_clipped_without_breaking_frame(self) -> None:
+        width = 94
+        status = {
+            **STATUS,
+            "objective": "A very long task value " * 12 + "\nwith a newline",
+            "next": "A very long next action " * 12,
+        }
+        rendered = render_terminal_header("Demo", status, width=width, enabled=False)
+        lines = rendered.rstrip("\n").splitlines()
+        self.assertTrue(all(len(line) == width - 1 for line in lines))
+        self.assertTrue(all(line.startswith(("┌", "│", "└")) for line in lines))
+        self.assertNotIn("\nwith a newline", rendered)
+        self.assertIn("…", rendered)
 
     def test_header_plain_mode_has_no_color_style_sequences(self) -> None:
         rendered = render_terminal_header("Demo", STATUS, width=100, enabled=False)
@@ -199,6 +238,74 @@ class TerminalInteractiveTests(unittest.TestCase):
         self.assertIn("Use `ekzd prompt`", rendered_history)
         self.assertNotIn("line 79", rendered_history)
 
+    def test_persistent_view_task_uses_nonredundant_detail_view(self) -> None:
+        terminal = RecordingTerminal()
+        values = iter(["3", "5"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=STATUS),
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: next(values),
+                output=io.StringIO(),
+                terminal=terminal,
+            )
+        self.assertEqual(0, code)
+        detail = terminal.history[-1]
+        self.assertIn("Task details", detail)
+        self.assertIn("Objective", detail)
+        self.assertIn("Branches", detail)
+        self.assertIn("baseline", detail)
+        self.assertIn("implementation", detail)
+        self.assertIn("Repository", detail)
+        self.assertIn("baseline HEAD", detail)
+        self.assertIn("worktree", detail)
+        for redundant in ("project  Demo", "verification", "commits", "Next"):
+            self.assertNotIn(redundant, detail)
+
+    def test_fallback_view_task_keeps_normal_status_presentation(self) -> None:
+        terminal = PlainRecordingTerminal()
+        output = io.StringIO()
+        values = iter(["3", "5"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=STATUS),
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: next(values),
+                output=output,
+                terminal=terminal,
+            )
+        self.assertEqual(0, code)
+        rendered = output.getvalue()
+        self.assertIn("EkzD · status", rendered)
+        self.assertIn("project  Demo", rendered)
+        self.assertIn("verification  not run", rendered)
+        self.assertIn("commits  1 / 3", rendered)
+        self.assertIn("Next", rendered)
+
+    def test_keyboard_menu_input_remains_normal_in_persistent_mode(self) -> None:
+        terminal = RecordingTerminal()
+        values = iter(["1", "5"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=STATUS),
+            mock.patch.object(interactive, "build_implementation_prompt", return_value="contract\n") as build_prompt,
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: next(values),
+                output=io.StringIO(),
+                terminal=terminal,
+            )
+        self.assertEqual(0, code)
+        build_prompt.assert_called_once_with(ROOT)
+
     def test_eof_and_ctrl_c_restore_persistent_terminal(self) -> None:
         for error in (EOFError(), KeyboardInterrupt()):
             with self.subTest(error=type(error).__name__):
@@ -221,6 +328,7 @@ class TerminalInteractiveTests(unittest.TestCase):
                     )
                 self.assertEqual(0, code)
                 self.assertTrue(output.getvalue().endswith(ALT_SCREEN_EXIT))
+                self.assertIn(ALT_SCROLL_RESTORE, output.getvalue())
 
     def test_handled_harness_error_keeps_session_usable_and_restores_on_exit(self) -> None:
         output = io.StringIO()
@@ -243,6 +351,7 @@ class TerminalInteractiveTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertIn("EkzD: blocked", error_output.getvalue())
         self.assertTrue(any("EkzD: blocked" in line for line in terminal._history))
+        self.assertIn(ALT_SCROLL_RESTORE, output.getvalue())
         self.assertTrue(output.getvalue().endswith(ALT_SCREEN_EXIT))
 
     def test_unexpected_interactive_failure_restores_alt_screen(self) -> None:
@@ -257,6 +366,7 @@ class TerminalInteractiveTests(unittest.TestCase):
                     output=output,
                     terminal=terminal,
                 )
+        self.assertIn(ALT_SCROLL_RESTORE, output.getvalue())
         self.assertTrue(output.getvalue().endswith(ALT_SCREEN_EXIT))
 
 

@@ -11,6 +11,9 @@ ALT_SCREEN_EXIT = "\x1b[?1049l"
 CLEAR_SCREEN = "\x1b[2J"
 CURSOR_HOME = "\x1b[H"
 STYLE_RESET = "\x1b[0m"
+ALT_SCROLL_SAVE = "\x1b[?1007s"
+ALT_SCROLL_DISABLE = "\x1b[?1007l"
+ALT_SCROLL_RESTORE = "\x1b[?1007r"
 MIN_PERSISTENT_COLUMNS = 72
 MIN_PERSISTENT_LINES = 18
 
@@ -72,7 +75,13 @@ class TerminalSession:
     def __enter__(self) -> "TerminalSession":
         self._entered = True
         if self.capabilities.alternate_screen:
-            self.output.write(ALT_SCREEN_ENTER + CLEAR_SCREEN + CURSOR_HOME)
+            self.output.write(
+                ALT_SCROLL_SAVE
+                + ALT_SCROLL_DISABLE
+                + ALT_SCREEN_ENTER
+                + CLEAR_SCREEN
+                + CURSOR_HOME
+            )
             self.output.flush()
         elif self.capabilities.screen_control:
             self.output.write(CLEAR_SCREEN + CURSOR_HOME)
@@ -84,7 +93,7 @@ class TerminalSession:
             return False
         try:
             if self.capabilities.alternate_screen:
-                self.output.write(STYLE_RESET + ALT_SCREEN_EXIT)
+                self.output.write(STYLE_RESET + ALT_SCROLL_RESTORE + ALT_SCREEN_EXIT)
             elif self.capabilities.screen_control:
                 self.output.write(STYLE_RESET + "\n")
             self.output.flush()

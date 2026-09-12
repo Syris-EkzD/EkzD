@@ -16,6 +16,7 @@ from .ui import (
     render_status_ui,
     render_terminal_actions,
     render_terminal_header,
+    render_terminal_task_details,
     render_verification_ui,
     warning,
 )
@@ -208,7 +209,10 @@ def run_interactive(
                     elif action == "verify":
                         _emit(session, output, render_verification_ui(verify_session(root), enabled=enabled))
                     elif action == "view":
-                        _emit(session, output, render_status_ui({**status, "project": project}, enabled=enabled))
+                        if session.persistent:
+                            _emit(session, output, render_terminal_task_details(status, enabled=enabled))
+                        else:
+                            _emit(session, output, render_status_ui({**status, "project": project}, enabled=enabled))
                     elif action == "accept":
                         if not _confirm(input_fn, "Accept this verified task?"):
                             _emit(session, output, warning("Acceptance cancelled.", enabled=enabled) + "\n")
