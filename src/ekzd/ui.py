@@ -83,9 +83,13 @@ def render_context_ui(context: dict[str, Any], *, enabled: bool) -> str:
             enabled=enabled,
         ),
         "",
-        _section("Scope", enabled=enabled),
+        _section("Sources", enabled=enabled),
     ]
 
+    sources = context.get("sources", {}).get("paths", [])
+    lines.extend(_list_items(sources, enabled=enabled))
+
+    lines.extend(["", _section("Scope", enabled=enabled)])
     scope = context.get("scope", {})
     lines.append(f"  {muted('include', enabled=enabled)}")
     lines.extend(_list_items(scope.get("include", []), enabled=enabled))
