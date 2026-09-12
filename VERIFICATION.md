@@ -19,6 +19,8 @@ EkzD records:
 
 Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
 
+Scope is checked both before and after the configured verification commands run. This prevents a successful verifier from silently creating or modifying Git-visible files outside the declared session scope. A verifier-created scope violation invalidates verification even if every configured command exited successfully.
+
 ## Immutable session contract
 
 When `ekzd start` creates a session, it records the digest of the complete `.ekzd/project.toml` file.
@@ -47,6 +49,16 @@ Directory patterns ending in `/` match that directory and its descendants. Other
 
 Session state (`.ekzd/session.json`) is excluded from changed-path evaluation because it is harness metadata, not project output.
 
+## AI-assisted operating model
+
+EkzD does not need to be the code generator to enforce this standard.
+
+In the recommended V1 workflow, the local EkzD session defines the contract, `ekzd context --json` is handed to a prompt-generation/planning session, and a separate coding session implements the resulting prompt through GitHub. The resulting branch is then pulled into the environment where EkzD is running and verified against the original local contract.
+
+This means V1 provides deterministic post-work enforcement rather than real-time control over a remote AI session. A remote code generator can technically create an invalid commit; EkzD's responsibility is to refuse verification or acceptance when that Git-visible result violates the measurable contract.
+
+Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces configuration integrity, path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
+
 ## Acceptance
 
 Acceptance is a separate stage from verification.
@@ -71,7 +83,7 @@ Git-ignored files are outside V1's exact-state fingerprint. A project that needs
 
 ## What this standard does not prove
 
-Passing verification does not prove that requirements were interpreted correctly, that tests are complete, or that a change is desirable. Acceptance criteria may include semantic or product judgments that require human review.
+Passing verification does not prove that requirements were interpreted correctly, that tests are complete, that free-text project guidance was followed semantically, or that a change is desirable. Acceptance criteria may include product and code-quality judgments that require human review.
 
 EkzD therefore records explicit approval rather than treating a successful command as automatic authorization to merge or deploy.
 
