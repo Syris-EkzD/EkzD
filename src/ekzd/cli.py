@@ -16,6 +16,7 @@ from .core import (
     update_handoff,
     verify_session,
 )
+from .interactive import run_interactive
 from .ui import (
     failure,
     render_command_summary,
@@ -30,7 +31,7 @@ from .workflow import build_implementation_prompt, build_workflow_status, start_
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="ekzd", description="EkzD — strict development harness.")
-    sub = result.add_subparsers(dest="command", required=True)
+    sub = result.add_subparsers(dest="command")
 
     init = sub.add_parser("init", help="Create project harness configuration.")
     init.add_argument("--name")
@@ -64,11 +65,27 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def _interactive_terminal() -> bool:
+    return bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
+        getattr(sys.stdout, "isatty", lambda: False)()
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     color = supports_color(sys.stdout)
+
+    if args.command is None and not _interactive_terminal():
+        print(
+            "EkzD: no command provided in a non-interactive environment. Run `ekzd --help` to see available commands.",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         root = find_root(Path.cwd())
+        if args.command is None:
+            return run_interactive(root, enabled=color)
         if args.command == "init":
             path = init_project(root, args.name)
             print(
