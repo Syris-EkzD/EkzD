@@ -17,9 +17,9 @@ EkzD records:
 - the active session's final commit count and configured maximum;
 - each verification command, working directory, exit code, and bounded output.
 
-Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, a configured command cannot be launched, or any configured command fails.
+Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, local session state is tracked or changes during verification, a working directory escapes the repository, a command times out, a configured command cannot be launched, or any configured command fails.
 
-Before commands run, EkzD validates the ready project configuration, active session contract, commit budget, and changed-path scope. After the configured commands finish, EkzD reloads the ready configuration and active session and rechecks the frozen configuration digest, commit budget, and scope before recording verification evidence. This prevents a verifier from silently changing the contract, exceeding the session budget, or creating Git-visible changes outside the declared scope while still producing a green verification result.
+Before commands run, EkzD validates the ready project configuration, active session contract, commit budget, and changed-path scope, and pins the active local session state for the verification attempt. After the configured commands finish, EkzD reloads the ready configuration, requires the local session state to remain untracked and unchanged, and rechecks the frozen configuration digest, commit budget, and scope against the original pinned session state before recording verification evidence. This prevents a verifier from redefining the session baseline, silently changing the contract, exceeding the session budget, or creating Git-visible changes outside the declared scope while still producing a green verification result.
 
 Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git rename collapsing for scope evaluation so both sides of a move are evaluated independently, and it parses Git paths without relying on newline-delimited or quoted output.
 
@@ -28,6 +28,14 @@ Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git renam
 When `ekzd start` creates a session, it records the digest of the complete `.ekzd/project.toml` file.
 
 Verification and acceptance require the current configuration to match that starting digest. Scope, authority, session policy, acceptance criteria, verification commands, and other harness settings therefore cannot be loosened or otherwise changed during an active session. Change the configuration only after aborting or finishing the current session, then start a fresh session.
+
+## Session-state integrity
+
+`.ekzd/session.json` is trusted operator-local harness metadata. It must remain untracked by Git. EkzD refuses to read or write session state when that path is tracked, so a pulled branch cannot legitimately replace the local session contract through repository history.
+
+At the start of verification, EkzD keeps the parsed session contract in memory and records the local state file digest. Verification commands may run ordinary project code, so after they finish EkzD requires the on-disk session state to still match the state that existed before the commands ran. Post-verification budget and scope checks use the original pinned session contract rather than trusting a replacement baseline written by the verifier.
+
+This is integrity checking for the normal V1 workflow, not an operating-system sandbox. V1 does not claim to defend against a hostile same-user process with arbitrary control over the EkzD process, filesystem, or Git internals.
 
 ## Session budget
 
@@ -49,7 +57,7 @@ If a session exceeds its budget or otherwise cannot be completed under its origi
 
 Directory patterns ending in `/` match that directory and its descendants. Other patterns use case-sensitive glob matching.
 
-Session state (`.ekzd/session.json`) is excluded from changed-path evaluation because it is harness metadata, not project output.
+Untracked session state (`.ekzd/session.json`) is excluded from changed-path evaluation because it is harness metadata, not project output. If that path is tracked by Git, EkzD rejects the session-state operation instead of excluding the tracked file from the trust boundary.
 
 ## AI-assisted operating model
 
@@ -59,7 +67,7 @@ In the recommended V1 workflow, the local EkzD session defines the contract, `ek
 
 This means V1 provides deterministic post-work enforcement rather than real-time control over a remote AI session. A remote code generator can technically create an invalid commit; EkzD's responsibility is to refuse verification or acceptance when that Git-visible result violates the measurable contract.
 
-Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces configuration integrity, path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
+Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces configuration integrity, local session-state integrity, path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
 
 ## Acceptance
 
@@ -67,7 +75,7 @@ Acceptance is a separate stage from verification.
 
 `ekzd finish --accept` must reject the task unless all of the following are true:
 
-1. an active session exists;
+1. an active local, untracked session exists;
 2. the project harness configuration still matches the digest captured at session start;
 3. configured verification completed successfully;
 4. the active session still satisfies its original commit budget;
