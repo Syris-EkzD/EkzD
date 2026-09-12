@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fnmatch
+import hashlib
 import json
 import subprocess
 import tomllib
@@ -90,11 +92,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
     acceptance = data.get("acceptance", {})
     if not isinstance(acceptance, dict):
         raise HarnessError("acceptance must be a table.")
-    _string_list(
-        acceptance.get("criteria", []),
-        "acceptance.criteria",
-        require_nonempty=ready,
-    )
+    _string_list(acceptance.get("criteria", []), "acceptance.criteria", require_nonempty=ready)
 
     verification = data.get("verification", {})
     if not isinstance(verification, dict):
@@ -110,9 +108,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
         if not isinstance(step.get("name"), str) or not step["name"].strip():
             raise HarnessError(f"verification.steps[{index}].name must be non-empty.")
         command = step.get("command")
-        if not isinstance(command, list) or not command or any(
-            not isinstance(part, str) or not part for part in command
-        ):
+        if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
             raise HarnessError(f"verification.steps[{index}].command must be a non-empty string array.")
         cwd = step.get("cwd", ".")
         if not isinstance(cwd, str) or not cwd.strip():
@@ -120,9 +116,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
         _safe_relative_path(cwd, f"verification.steps[{index}].cwd")
         timeout = step.get("timeout_seconds", 600)
         if not isinstance(timeout, int) or timeout < 1 or timeout > 3600:
-            raise HarnessError(
-                f"verification.steps[{index}].timeout_seconds must be between 1 and 3600."
-            )
+            raise HarnessError(f"verification.steps[{index}].timeout_seconds must be between 1 and 3600.")
 
     return data
 
@@ -250,11 +244,135 @@ def render_context(context: dict[str, Any]) -> str:
         f"- HEAD: {context['git']['head']}",
         f"- Working tree entries: {len(context['git']['status'])}",
     ]
-    for title, key in (
-        ("Sources", "sources"),
-        ("Scope", "scope"),
-        ("Authority", "authority"),
-        ("Acceptance", "acceptance"),
-    ):
+    for title, key in (("Sources", "sources"), ("Scope", "scope"), ("Authority", "authority"), ("Acceptance", "acceptance")):
         lines.extend(["", f"## {title}", json.dumps(context[key], indent=2, sort_keys=True)])
     return "\n".join(lines) + "\n"
+
+
+def config_digest(root: Path) -> str:
+    return hashlib.sha256((root / CONFIG_RELATIVE).read_bytes()).hexdigest()
+
+
+def changed_paths(root: Path) -> list[str]:
+    tracked = set(run_git(root, "diff", "--name-only", "HEAD").splitlines())
+    staged = set(run_git(root, "diff", "--cached", "--name-only").splitlines())
+    untracked = set(run_git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+    ignored = {STATE_RELATIVE.as_posix()}
+    return sorted(path for path in tracked | staged | untracked if path and path not in ignored)
+
+
+def _matches_scope(path: str, pattern: str) -> bool:
+    normalized = pattern.rstrip("/")
+    if pattern.endswith("/"):
+        return path == normalized or path.startswith(normalized + "/")
+    return fnmatch.fnmatchcase(path, pattern)
+
+
+def enforce_scope(root: Path, config: dict[str, Any]) -> list[str]:
+    paths = changed_paths(root)
+    scope = config.get("scope", {})
+    include = scope.get("include", [])
+    exclude = scope.get("exclude", [])
+    violations: list[str] = []
+    for path in paths:
+        if include and not any(_matches_scope(path, pattern) for pattern in include):
+            violations.append(f"{path}: outside scope.include")
+        if any(_matches_scope(path, pattern) for pattern in exclude):
+            violations.append(f"{path}: matches scope.exclude")
+    if violations:
+        raise HarnessError("Scope violations:\n- " + "\n- ".join(violations))
+    return paths
+
+
+def _active_state(root: Path) -> dict[str, Any]:
+    state = read_state(root)
+    if not state or state.get("status") != "active":
+        raise HarnessError("No active EkzD session.")
+    return state
+
+
+def verify_session(root: Path) -> dict[str, Any]:
+    config = load_config(root, ready=True)
+    state = _active_state(root)
+    paths = enforce_scope(root, config)
+    results: list[dict[str, Any]] = []
+    for step in config["verification"]["steps"]:
+        cwd = (root / step.get("cwd", ".")).resolve()
+        if root not in (cwd, *cwd.parents) or not cwd.is_dir():
+            raise HarnessError(f"Verification cwd is invalid: {step.get('cwd', '.')}")
+        try:
+            process = subprocess.run(step["command"], cwd=cwd, text=True, capture_output=True, timeout=step.get("timeout_seconds", 600))
+            result = {
+                "name": step["name"],
+                "command": step["command"],
+                "cwd": str(cwd.relative_to(root)),
+                "exit_code": process.returncode,
+                "stdout": process.stdout[-4000:],
+                "stderr": process.stderr[-4000:],
+                "passed": process.returncode == 0,
+            }
+        except subprocess.TimeoutExpired as exc:
+            result = {
+                "name": step["name"],
+                "command": step["command"],
+                "cwd": str(cwd.relative_to(root)),
+                "exit_code": None,
+                "stdout": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+                "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+                "passed": False,
+                "timed_out": True,
+            }
+        results.append(result)
+        if not result["passed"]:
+            break
+
+    passed = len(results) == len(config["verification"]["steps"]) and all(item["passed"] for item in results)
+    verification = {
+        "verified_at": utc_now(),
+        "passed": passed,
+        "config_digest": config_digest(root),
+        "git": git_state(root),
+        "changed_paths": paths,
+        "steps": results,
+    }
+    state["verification"] = verification
+    state["acceptance"] = None
+    write_state(root, state)
+    return verification
+
+
+def update_handoff(root: Path, *, done: list[str], next_items: list[str]) -> dict[str, Any]:
+    state = _active_state(root)
+    handoff = state.setdefault("handoff", {"done": [], "next": []})
+    handoff["done"].extend(item.strip() for item in done if item.strip())
+    handoff["next"].extend(item.strip() for item in next_items if item.strip())
+    handoff["updated_at"] = utc_now()
+    write_state(root, state)
+    return handoff
+
+
+def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
+    if not accept:
+        raise HarnessError("Acceptance requires explicit `ekzd finish --accept` approval.")
+    config = load_config(root, ready=True)
+    state = _active_state(root)
+    verification = state.get("verification")
+    if not isinstance(verification, dict) or not verification.get("passed"):
+        raise HarnessError("Acceptance blocked: verification has not passed.")
+    if verification.get("config_digest") != config_digest(root):
+        raise HarnessError("Acceptance blocked: project configuration changed after verification.")
+    current_git = git_state(root)
+    if verification.get("git") != current_git:
+        raise HarnessError("Acceptance blocked: Git/worktree state changed after verification.")
+    enforce_scope(root, config)
+    acceptance = {
+        "accepted_at": utc_now(),
+        "criteria": list(config["acceptance"]["criteria"]),
+        "explicit_approval": True,
+        "verification_bound": True,
+    }
+    state["acceptance"] = acceptance
+    state["status"] = "finished"
+    state["finished_at"] = acceptance["accepted_at"]
+    write_state(root, state)
+    return state
