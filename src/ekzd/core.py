@@ -72,8 +72,9 @@ def _safe_relative_path(value: str, label: str) -> Path:
 
 
 def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> dict[str, Any]:
-    if data.get("schema_version") != SCHEMA_VERSION:
-        raise HarnessError(f"schema_version must be {SCHEMA_VERSION}.")
+    schema_version = data.get("schema_version")
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != SCHEMA_VERSION:
+        raise HarnessError(f"schema_version must be integer {SCHEMA_VERSION}.")
 
     project = data.get("project")
     if not isinstance(project, dict) or not isinstance(project.get("name"), str) or not project["name"].strip():
@@ -137,8 +138,8 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
             raise HarnessError(f"verification.steps[{index}].cwd must be a non-empty string.")
         _safe_relative_path(cwd, f"verification.steps[{index}].cwd")
         timeout = step.get("timeout_seconds", 600)
-        if not isinstance(timeout, int) or timeout < 1 or timeout > 3600:
-            raise HarnessError(f"verification.steps[{index}].timeout_seconds must be between 1 and 3600.")
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1 or timeout > 3600:
+            raise HarnessError(f"verification.steps[{index}].timeout_seconds must be an integer between 1 and 3600.")
 
     return data
 
@@ -318,13 +319,17 @@ def config_digest(root: Path) -> str:
     return hashlib.sha256((root / CONFIG_RELATIVE).read_bytes()).hexdigest()
 
 
+def _decode_git_paths(output: bytes) -> set[str]:
+    return {raw.decode("utf-8", errors="surrogateescape") for raw in output.split(b"\0") if raw}
+
+
 def changed_paths(root: Path, *, start_head: str | None = None) -> list[str]:
-    committed = set()
+    committed: set[str] = set()
     if start_head is not None:
-        committed = set(run_git(root, "diff", "--name-only", start_head, "HEAD").splitlines())
-    tracked = set(run_git(root, "diff", "--name-only", "HEAD").splitlines())
-    staged = set(run_git(root, "diff", "--cached", "--name-only").splitlines())
-    untracked = set(run_git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+        committed = _decode_git_paths(run_git_bytes(root, "diff", "--name-only", "--no-renames", "-z", start_head, "HEAD"))
+    tracked = _decode_git_paths(run_git_bytes(root, "diff", "--name-only", "--no-renames", "-z"))
+    staged = _decode_git_paths(run_git_bytes(root, "diff", "--cached", "--name-only", "--no-renames", "-z"))
+    untracked = _decode_git_paths(run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z"))
     ignored = {STATE_RELATIVE.as_posix()}
     return sorted(path for path in committed | tracked | staged | untracked if path and path not in ignored)
 
@@ -438,10 +443,25 @@ def verify_session(root: Path) -> dict[str, Any]:
                 "passed": False,
                 "timed_out": True,
             }
+        except OSError as exc:
+            result = {
+                "name": step["name"],
+                "command": step["command"],
+                "cwd": str(cwd.relative_to(root)),
+                "exit_code": None,
+                "stdout": "",
+                "stderr": str(exc)[-4000:],
+                "passed": False,
+                "launch_error": True,
+            }
         results.append(result)
         if not result["passed"]:
             break
 
+    config = load_config(root, ready=True)
+    state = _active_state(root)
+    enforce_session_contract(root, state)
+    budget = enforce_session_budget(root, config, state)
     paths = enforce_scope(root, config, start_head=_session_start_head(state))
     passed = len(results) == len(config["verification"]["steps"]) and all(item["passed"] for item in results)
     verification = {
