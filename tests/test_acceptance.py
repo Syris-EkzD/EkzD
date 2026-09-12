@@ -74,6 +74,22 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(HarnessError):
             finish_session(self.root, accept=True)
 
+    def test_finish_blocks_same_file_content_mutation(self) -> None:
+        verify_session(self.root)
+        (self.root / "src/app.py").write_text("VALUE = 3\n", encoding="utf-8")
+
+        with self.assertRaises(HarnessError):
+            finish_session(self.root, accept=True)
+
+    def test_finish_blocks_untracked_file_content_mutation(self) -> None:
+        untracked = self.root / "src/new.py"
+        untracked.write_text("VALUE = 1\n", encoding="utf-8")
+        verify_session(self.root)
+        untracked.write_text("VALUE = 2\n", encoding="utf-8")
+
+        with self.assertRaises(HarnessError):
+            finish_session(self.root, accept=True)
+
     def test_finish_accepts_exact_verified_state(self) -> None:
         verify_session(self.root)
         state = finish_session(self.root, accept=True)
