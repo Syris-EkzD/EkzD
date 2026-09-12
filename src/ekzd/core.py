@@ -35,6 +35,18 @@ def run_git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def run_git_bytes(root: Path, *args: str) -> bytes:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip() or result.stdout.decode("utf-8", errors="replace").strip()
+        raise HarnessError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout
+
+
 def find_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
@@ -159,6 +171,38 @@ def git_state(root: Path) -> dict[str, Any]:
         "branch": run_git(root, "branch", "--show-current") or "(detached)",
         "status": run_git(root, "status", "--porcelain=v1", "--untracked-files=all").splitlines(),
     }
+
+
+def git_state_fingerprint(root: Path) -> str:
+    digest = hashlib.sha256()
+    components = (
+        ("head", ("rev-parse", "HEAD")),
+        ("branch", ("branch", "--show-current")),
+        ("status", ("status", "--porcelain=v1", "--untracked-files=all")),
+        ("worktree-diff", ("diff", "--binary", "HEAD")),
+        ("index-diff", ("diff", "--binary", "--cached", "HEAD")),
+    )
+    for label, args in components:
+        digest.update(label.encode("utf-8") + b"\0")
+        digest.update(run_git_bytes(root, *args))
+        digest.update(b"\0")
+
+    untracked = [path for path in run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if path]
+    for raw_path in sorted(untracked):
+        digest.update(b"untracked\0" + raw_path + b"\0")
+        path = root / raw_path.decode("utf-8", errors="surrogateescape")
+        if path.is_symlink():
+            digest.update(b"symlink\0")
+            digest.update(str(path.readlink()).encode("utf-8", errors="surrogateescape"))
+        elif path.is_file():
+            digest.update(b"file\0")
+            with path.open("rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    digest.update(chunk)
+        else:
+            digest.update(b"missing-or-non-file\0")
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def init_project(root: Path, name: str | None = None) -> Path:
@@ -342,6 +386,7 @@ def verify_session(root: Path) -> dict[str, Any]:
         "passed": passed,
         "config_digest": config_digest(root),
         "git": git_state(root),
+        "state_fingerprint": git_state_fingerprint(root),
         "changed_paths": paths,
         "steps": results,
     }
@@ -374,6 +419,8 @@ def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
     current_git = git_state(root)
     if verification.get("git") != current_git:
         raise HarnessError("Acceptance blocked: Git/worktree state changed after verification.")
+    if verification.get("state_fingerprint") != git_state_fingerprint(root):
+        raise HarnessError("Acceptance blocked: Git-visible file contents changed after verification.")
     enforce_scope(root, config, start_head=_session_start_head(state))
     acceptance = {
         "accepted_at": utc_now(),
