@@ -88,6 +88,57 @@ class EkzDCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "regular tracked file"):
             start_session(self.root, "Do work")
 
+    def test_active_contract_uses_committed_blob_under_git_filter(self) -> None:
+        config = self.root / ".ekzd/project.toml"
+        config.parent.mkdir()
+        clean_filter = self.root / "clean_filter.py"
+        smudge_filter = self.root / "smudge_filter.py"
+        attributes = self.root / ".gitattributes"
+        clean_filter.write_text(
+            "import sys\ntext = sys.stdin.read()\nsys.stdout.write(text.replace('include = [\\\"*\\\"]', 'include = [\\\"src/\\\"]'))\n",
+            encoding="utf-8",
+        )
+        smudge_filter.write_text(
+            "import sys\ntext = sys.stdin.read()\nsys.stdout.write(text.replace('include = [\\\"src/\\\"]', 'include = [\\\"*\\\"]'))\n",
+            encoding="utf-8",
+        )
+        attributes.write_text(".ekzd/project.toml filter=ekzd-contract\n", encoding="utf-8")
+        subprocess.run(["git", "config", "filter.ekzd-contract.clean", "python3 clean_filter.py"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "filter.ekzd-contract.smudge", "python3 smudge_filter.py"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "filter.ekzd-contract.required", "true"], cwd=self.root, check=True)
+
+        config.write_text(VALID_CONFIG.replace('include = [\"src/\"]', 'include = [\"*\"]'), encoding="utf-8")
+        subprocess.run(
+            ["git", "add", ".gitattributes", "clean_filter.py", "smudge_filter.py", ".ekzd/project.toml"],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(["git", "commit", "-qm", "add filtered EkzD contract"], cwd=self.root, check=True)
+
+        committed = subprocess.run(
+            ["git", "show", "HEAD:.ekzd/project.toml"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+        self.assertIn('include = [\"src/\"]', committed)
+        self.assertIn('include = [\"*\"]', config.read_text(encoding="utf-8"))
+        self.assertEqual(
+            "",
+            subprocess.run(
+                ["git", "diff", "--name-only", "--", ".ekzd/project.toml"],
+                cwd=self.root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip(),
+        )
+
+        start_session(self.root, "Use the committed contract")
+        context = build_context(self.root)
+        self.assertEqual(["src/"], context["scope"]["include"])
+
     def test_start_and_context_use_valid_config(self) -> None:
         config = self.root / ".ekzd/project.toml"
         config.parent.mkdir()
