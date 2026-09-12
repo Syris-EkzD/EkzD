@@ -81,6 +81,7 @@ class UiTests(unittest.TestCase):
         self.assertNotIn("\x1b[", rendered)
         self.assertIn("EkzD · status", rendered)
         self.assertIn("✓ Session active", rendered)
+        self.assertIn("project  Demo", rendered)
         self.assertIn("verification  stale", rendered)
         self.assertIn("Branches", rendered)
         self.assertIn("implementation  feat/demo", rendered)
@@ -88,6 +89,21 @@ class UiTests(unittest.TestCase):
         self.assertIn("commits  0 / 3", rendered)
         self.assertIn("Next", rendered)
         self.assertIn("› Rerun `ekzd verify`.", rendered)
+
+    def test_finished_status_plain_output_includes_project_identity(self) -> None:
+        status = {
+            "session_status": "finished",
+            "project": "Demo",
+            "objective": "Change one thing",
+            "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
+        }
+
+        rendered = render_status_ui(status, enabled=False)
+
+        self.assertNotIn("\x1b[", rendered)
+        self.assertIn("! Session: finished", rendered)
+        self.assertIn("project  Demo", rendered)
+        self.assertIn("objective  Change one thing", rendered)
 
     def test_status_blocked_output_surfaces_reason(self) -> None:
         status = {
