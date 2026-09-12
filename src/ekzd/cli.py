@@ -12,6 +12,7 @@ from .core import (
     find_root,
     finish_session,
     init_project,
+    read_state,
     update_handoff,
     verify_session,
 )
@@ -104,7 +105,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.command == "status":
-            print(render_status_ui(build_workflow_status(root), enabled=color), end="")
+            status = build_workflow_status(root)
+            if status.get("session_status") == "finished":
+                state = read_state(root)
+                project = state.get("project") if state else None
+                if project:
+                    status = {**status, "project": project}
+            print(render_status_ui(status, enabled=color), end="")
             return 0
         if args.command == "prompt":
             print(build_implementation_prompt(root), end="")
