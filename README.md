@@ -66,6 +66,7 @@ At session start EkzD also captures a sanitized repository identifier derived fr
 ## Commands
 
 ```sh
+ekzd
 ekzd init
 ekzd start "implement registration validation" --branch feat/registration-validation
 ekzd status
@@ -91,7 +92,15 @@ ekzd abort
 
 ## Terminal interface
 
-EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic status colors, concise section headings, readable success/failure indicators, and short next-action guidance rather than raw JSON for normal human-facing output.
+Running bare `ekzd` in a supported interactive terminal launches EkzD's persistent terminal session. The session uses an alternate screen when the terminal safely supports it, keeps a compact workflow header at the top, and redraws that header from the current EkzD state after actions change the session. The workspace beneath it keeps recent action output and presents state-aware actions such as generating the implementation handoff, verifying changes, viewing the task, accepting a verified task, aborting, or exiting.
+
+The header stays deliberately small. It shows the project and, when available, the session state, current task, current branch, verification state, commit budget, and recommended next action. The terminal session is only a presentation/controller over the existing EkzD operations: it does not duplicate verification, acceptance, scope, Git, or trust logic. Destructive or final actions still require the same explicit confirmation and underlying checks.
+
+Long deterministic outputs keep their explicit-command form. In particular, `ekzd prompt` remains the copyable plain-text implementation contract, while the persistent terminal records a concise prompt-ready result instead of flooding the fixed workspace with the whole contract. All explicit commands remain available normally.
+
+EkzD degrades conservatively when terminal screen control is unsuitable. Non-TTY bare invocation never waits for input, `TERM=dumb` and very small or unsupported terminals use the plain scrolling interactive presentation, and alternate-screen cleanup restores the previous terminal display on normal exit and failure paths.
+
+Human-facing color remains semantic:
 
 - green: successful or clean state;
 - red: failure or blocked operation;
@@ -99,9 +108,7 @@ EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic 
 - cyan: headings, accents, and informational markers;
 - dim text: secondary details.
 
-Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains plain text suitable for direct handoff.
-
-EkzD borrows the visual hierarchy of tools such as Codex, but remains a command-oriented CLI rather than a full-screen interactive TUI.
+Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. Screen-control sequences used by a supported persistent terminal are independent of color styling. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains deterministic plain text suitable for direct handoff.
 
 ## Project configuration
 
