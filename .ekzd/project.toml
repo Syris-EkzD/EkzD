@@ -1,0 +1,87 @@
+schema_version = 1
+
+[project]
+name = "EkzD"
+
+[sources]
+paths = [
+  "src/ekzd/ui.py",
+  "src/ekzd/cli.py",
+  "src/ekzd/workflow.py",
+  "tests/test_ui.py",
+]
+
+[scope]
+include = [
+  "src/ekzd/ui.py",
+  "src/ekzd/cli.py",
+  "tests/test_ui.py",
+  "tests/test_cli.py",
+]
+exclude = [
+  "src/ekzd/core.py",
+  "src/ekzd/workflow.py",
+  ".github/**",
+  "pyproject.toml",
+  ".ekzd/**",
+]
+constraints = [
+  "This task is presentation and CLI UX work only; preserve EkzD workflow, verification, acceptance, and trust semantics.",
+  "Preserve existing command names, arguments, exit-code behavior, and persisted state structures.",
+  "Keep `ekzd prompt` deterministic plain contract output without decorative UI or ANSI styling.",
+  "Keep `ekzd context --json` machine-readable and structurally unchanged.",
+  "Preserve stdout/stderr separation for normal output and errors.",
+  "Plain non-TTY and NO_COLOR output must remain readable and contain no ANSI escape sequences.",
+  "Do not add a TUI framework, spinners, interactive menus, or new runtime dependencies.",
+]
+
+[authority]
+may = [
+  "Refactor reusable CLI presentation helpers.",
+  "Standardize human-facing command output.",
+  "Add or update focused UI and CLI presentation tests.",
+]
+requires_approval = [
+  "Changing commands, flags, arguments, or exit-code behavior.",
+  "Changing machine-readable output contracts.",
+  "Adding any dependency.",
+]
+may_not = [
+  "Change core workflow, verification, acceptance, scope, or Git enforcement behavior.",
+  "Add GitHub authentication, networking, agent orchestration, daemon behavior, or autonomous merge behavior.",
+]
+
+[session]
+max_commits = 5
+
+[acceptance]
+criteria = [
+  "Human-facing commands use a consistent and readable visual hierarchy.",
+  "Status clearly communicates session, verification, blocked state, and next action.",
+  "Verification output clearly communicates individual step results and final outcome.",
+  "NO_COLOR and non-TTY output remain readable without ANSI escapes.",
+  "`ekzd prompt` remains deterministic plain contract text.",
+  "`ekzd context --json` remains machine-readable and structurally unchanged.",
+  "No workflow or trust-model behavior changes.",
+  "All configured verification passes.",
+]
+
+[verification]
+
+[[verification.steps]]
+name = "compile"
+command = ["python3", "-m", "compileall", "-q", "src", "tests"]
+cwd = "."
+timeout_seconds = 120
+
+[[verification.steps]]
+name = "tests"
+command = ["env", "PYTHONPATH=src", "python3", "-m", "unittest", "discover", "-s", "tests", "-v"]
+cwd = "."
+timeout_seconds = 600
+
+[[verification.steps]]
+name = "cli-help"
+command = ["env", "PYTHONPATH=src", "python3", "-m", "ekzd.cli", "--help"]
+cwd = "."
+timeout_seconds = 120
