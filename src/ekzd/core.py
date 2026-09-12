@@ -48,6 +48,11 @@ def run_git_bytes(root: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def ensure_session_state_untracked(root: Path) -> None:
+    if run_git(root, "ls-files", "--", STATE_RELATIVE.as_posix()):
+        raise HarnessError("EkzD session state must remain local and untracked.")
+
+
 def find_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
@@ -156,6 +161,7 @@ def load_config(root: Path, *, ready: bool = True) -> dict[str, Any]:
 
 
 def read_state(root: Path) -> dict[str, Any] | None:
+    ensure_session_state_untracked(root)
     path = root / STATE_RELATIVE
     if not path.exists():
         return None
@@ -169,11 +175,21 @@ def read_state(root: Path) -> dict[str, Any] | None:
 
 
 def write_state(root: Path, state: dict[str, Any]) -> None:
+    ensure_session_state_untracked(root)
     path = root / STATE_RELATIVE
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temp.replace(path)
+
+
+def session_state_digest(root: Path) -> str:
+    ensure_session_state_untracked(root)
+    path = root / STATE_RELATIVE
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise HarnessError(f"Unable to read {STATE_RELATIVE}: {exc}") from exc
 
 
 def git_state(root: Path) -> dict[str, Any]:
@@ -413,6 +429,7 @@ def enforce_session_budget(root: Path, config: dict[str, Any], state: dict[str, 
 def verify_session(root: Path) -> dict[str, Any]:
     config = load_config(root, ready=True)
     state = _active_state(root)
+    state_digest = session_state_digest(root)
     enforce_session_contract(root, state)
     budget = enforce_session_budget(root, config, state)
     paths = enforce_scope(root, config, start_head=_session_start_head(state))
@@ -459,7 +476,9 @@ def verify_session(root: Path) -> dict[str, Any]:
             break
 
     config = load_config(root, ready=True)
-    state = _active_state(root)
+    current_state = _active_state(root)
+    if current_state != state or session_state_digest(root) != state_digest:
+        raise HarnessError("EkzD session state changed during verification; verification cannot trust a modified session contract.")
     enforce_session_contract(root, state)
     budget = enforce_session_budget(root, config, state)
     paths = enforce_scope(root, config, start_head=_session_start_head(state))
