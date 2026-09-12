@@ -88,7 +88,7 @@ class EkzDCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "regular tracked file"):
             start_session(self.root, "Do work")
 
-    def test_active_contract_uses_committed_blob_under_git_filter(self) -> None:
+    def test_start_rejects_filtered_project_config(self) -> None:
         config = self.root / ".ekzd/project.toml"
         config.parent.mkdir()
         clean_filter = self.root / "clean_filter.py"
@@ -115,15 +115,6 @@ class EkzDCoreTests(unittest.TestCase):
         )
         subprocess.run(["git", "commit", "-qm", "add filtered EkzD contract"], cwd=self.root, check=True)
 
-        committed = subprocess.run(
-            ["git", "show", "HEAD:.ekzd/project.toml"],
-            cwd=self.root,
-            text=True,
-            capture_output=True,
-            check=True,
-        ).stdout
-        self.assertIn('include = [\"src/\"]', committed)
-        self.assertIn('include = [\"*\"]', config.read_text(encoding="utf-8"))
         self.assertEqual(
             "",
             subprocess.run(
@@ -134,10 +125,8 @@ class EkzDCoreTests(unittest.TestCase):
                 check=True,
             ).stdout.strip(),
         )
-
-        start_session(self.root, "Use the committed contract")
-        context = build_context(self.root)
-        self.assertEqual(["src/"], context["scope"]["include"])
+        with self.assertRaisesRegex(HarnessError, "Git content filters are unsupported"):
+            start_session(self.root, "Reject filtered checkout state")
 
     def test_start_and_context_use_valid_config(self) -> None:
         config = self.root / ".ekzd/project.toml"
