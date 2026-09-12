@@ -1,53 +1,57 @@
-# WM-V0-01 verification — 2026-09-06
+# EkzD Verification and Acceptance Standard
 
-Implementation is complete. The real run `horus-20260906` generated the candidate,
-but its final scope audit **failed closed**. Do not treat this run as approved.
+This document defines the V1 acceptance contract. It is intentionally stricter than simply running tests once.
 
-## Evidence
+## Verification
 
-- 26 Python unittest tests passed, including success, invalid inputs/policies,
-  forbidden writes, overwrite prevention, and a concurrent late-audit failure.
-- Python compilation passed. No lint/typecheck/build tools are configured.
-- Workflow Manager and Mind `git diff --check` passed; Mind's index check passed.
-- New implementation files and the untracked candidate were also checked with
-  `git diff --no-index --check` against `/dev/null`.
-- All 17 response checks passed: 14 typed boundary declarations plus section
-  structure, source references, and prompt binding. The rendered candidate was
-  read back and independently compared with the validated response and report hash.
-- All nine input hashes still match the prepared context.
-- No `Mind/Vault/Agents/Horus/Profile.md` exists. Canonical agent paths were unchanged.
-- No Work changes outside Workflow Manager were observed against the metadata
-  baseline. Horus Work's Git status remained clean.
-- The workflow's only Mind write was the approved Inbox candidate. The audit also
-  observed a concurrent change to `Mind/Vault/.obsidian/workspace.json`; its author
-  was not established. That change was not waived, reverted, or edited by this task.
-- No accounts, secrets, system configuration, commits, pushes, or Git history edits
-  were used. Unrelated file contents were not read for the scope audit.
+A verification result is valid only for the exact state that produced it.
 
-## Artifacts
+EkzD records:
 
-- Candidate: `~/WhiteTree/Mind/Vault/Inbox/Horus-Agent-Profile-Candidate.md`
-- Human report: `.runs/horus-20260906/report.md`
-- Machine report: `.runs/horus-20260906/report.json`
-- Prepared context and response: `.runs/horus-20260906/prompt.json` and `response.json`
+- the current Git commit (`HEAD`);
+- the current branch;
+- the complete porcelain worktree status;
+- the project configuration digest;
+- the changed paths considered for scope enforcement;
+- each verification command, working directory, exit code, and bounded output.
 
-The original late failure exposed a reporting bug: earlier scope-pass text and the
-success next action survived the failed result. The implementation and regression
-test now cover this. The local historical reports include an explicit correction
-note; the original failed result, observed changes, and hashes are preserved.
+Verification fails closed when configuration is invalid, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
 
-## Remaining boundary
+## Scope
 
-Investigate the concurrent workspace change before treating this run as verified.
-The existing candidate is never automatically overwritten or deleted. Human review
-must assess its source support, academic intake gaps, retention/privacy choices,
-and future integration authority. Promotion requires separate explicit approval
-and a separate step. The handoff uses the current reasoning session; unattended
-provider invocation is not configured. Metadata snapshots are an audit, not an OS
-sandbox or continuous filesystem monitor.
+`scope.include` is an allowlist when non-empty. A changed path must match at least one include pattern.
 
-Final follow-up observation: the metadata audit also observed these Mind paths
-after the failed run (ongoing changes were not waived):
+`scope.exclude` is always a denylist. A changed path matching an exclude pattern blocks verification even when it also matches an include pattern.
 
-- `Mind/Vault/.obsidian/workspace.json`
-- `Mind/Vault/Inbox/Horus-Agent-Profile-Candidate.md`
+Directory patterns ending in `/` match that directory and its descendants. Other patterns use case-sensitive glob matching.
+
+Session state (`.ekzd/session.json`) is excluded from changed-path evaluation because it is harness metadata, not project output.
+
+## Acceptance
+
+Acceptance is a separate stage from verification.
+
+`ekzd finish --accept` must reject the task unless all of the following are true:
+
+1. an active session exists;
+2. configured verification completed successfully;
+3. the project configuration digest is unchanged;
+4. Git HEAD is unchanged;
+5. the branch is unchanged;
+6. the worktree status is unchanged;
+7. scope still passes; and
+8. explicit human approval is supplied with `--accept`.
+
+If any project file, configuration entry, branch, commit, or worktree state changes after verification, the prior result becomes stale and verification must be rerun.
+
+## What this standard does not prove
+
+Passing verification does not prove that requirements were interpreted correctly, that tests are complete, or that a change is desirable. Acceptance criteria may include semantic or product judgments that require human review.
+
+EkzD therefore records explicit approval rather than treating a successful command as automatic authorization to merge or deploy.
+
+## V1 portability rule
+
+Project configuration must use repository-relative paths and command arrays. EkzD runs commands directly without a shell. This keeps command behavior deterministic and avoids shell interpolation becoming part of the harness contract.
+
+Future schema versions may add stronger evidence or policy gates, but V1 should remain backward-compatible within `schema_version = 1` or require an explicit schema increment.
