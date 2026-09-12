@@ -84,9 +84,16 @@ def ensure_index_paths_visible(root: Path) -> None:
 def ensure_project_config_committed_clean(root: Path) -> None:
     ensure_index_paths_visible(root)
     path = CONFIG_RELATIVE.as_posix()
-    if run_git(root, "ls-tree", "--name-only", "HEAD", "--", path) != path:
+    tree_entry = run_git(root, "ls-tree", "HEAD", "--", path)
+    if not tree_entry:
         raise HarnessError(
             "Project harness configuration must be committed before starting or using an active session: "
+            f"{path}"
+        )
+    mode = tree_entry.split(None, 1)[0]
+    if mode not in {"100644", "100755"} or (root / CONFIG_RELATIVE).is_symlink():
+        raise HarnessError(
+            "Project harness configuration must be a regular tracked file; symlinked contracts are not supported: "
             f"{path}"
         )
     unstaged = run_git(root, "diff", "--name-only", "--no-renames", "--", path)
