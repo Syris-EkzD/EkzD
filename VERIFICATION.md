@@ -17,11 +17,11 @@ EkzD records:
 - the active session's final commit count and configured maximum;
 - each verification command, working directory, exit code, and bounded output.
 
-Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, local session state is tracked or changes during verification, a working directory escapes the repository, a command times out, a configured command cannot be launched, or any configured command fails.
+Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, tracked paths use Git index flags that suppress normal change visibility, local session state is tracked or changes during verification, a working directory escapes the repository, a command times out, a configured command cannot be launched, or any configured command fails.
 
-Before commands run, EkzD validates the ready project configuration, active session contract, commit budget, and changed-path scope, and pins the active local session state for the verification attempt. After the configured commands finish, EkzD reloads the ready configuration, requires the local session state to remain untracked and unchanged, and rechecks the frozen configuration digest, commit budget, and scope against the original pinned session state before recording verification evidence. This prevents a verifier from redefining the session baseline, silently changing the contract, exceeding the session budget, or creating Git-visible changes outside the declared scope while still producing a green verification result.
+Before commands run, EkzD validates the ready project configuration, active session contract, commit budget, Git index visibility, and changed-path scope, and pins the active local session state for the verification attempt. After the configured commands finish, EkzD reloads the ready configuration, requires the local session state to remain untracked and unchanged, and rechecks the frozen configuration digest, commit budget, Git index visibility, and scope against the original pinned session state before recording verification evidence. This prevents a verifier from redefining the session baseline, silently changing the contract, exceeding the session budget, hiding tracked changes with Git index flags, or creating Git-visible changes outside the declared scope while still producing a green verification result.
 
-Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git rename collapsing for scope evaluation so both sides of a move are evaluated independently, and it parses Git paths without relying on newline-delimited or quoted output.
+Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git rename collapsing for scope evaluation so both sides of a move are evaluated independently, and it parses Git paths without relying on newline-delimited or quoted output. For committed work, scope is historical rather than net-only: EkzD unions the paths touched by every commit reachable in the active session range from the recorded starting `HEAD` through the current `HEAD`. A path therefore remains part of scope evaluation even when a later session commit restores its contents to the starting version.
 
 ## Immutable session contract
 
@@ -57,6 +57,10 @@ If a session exceeds its budget or otherwise cannot be completed under its origi
 
 Directory patterns ending in `/` match that directory and its descendants. Other patterns use case-sensitive glob matching.
 
+Committed scope includes every path touched by every commit in the active session history, not only files whose final contents differ from the starting tree. Reverting an out-of-scope change in a later commit does not erase that path from the session's scope evidence. Current staged, unstaged, and untracked changes are then unioned with that committed history before the allowlist and denylist are evaluated.
+
+EkzD rejects tracked paths marked with Git's `assume-unchanged` or `skip-worktree` index flags because those flags intentionally suppress ordinary status/diff visibility and would weaken deterministic scope and exact-state checks. V1 therefore does not support operating inside a sparse-checkout state that depends on `skip-worktree`; clear those flags or use a normal checkout before starting or verifying an EkzD session.
+
 Untracked session state (`.ekzd/session.json`) is excluded from changed-path evaluation because it is harness metadata, not project output. If that path is tracked by Git, EkzD rejects the session-state operation instead of excluding the tracked file from the trust boundary.
 
 ## AI-assisted operating model
@@ -67,7 +71,7 @@ In the recommended V1 workflow, the local EkzD session defines the contract, `ek
 
 This means V1 provides deterministic post-work enforcement rather than real-time control over a remote AI session. A remote code generator can technically create an invalid commit; EkzD's responsibility is to refuse verification or acceptance when that Git-visible result violates the measurable contract.
 
-Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces configuration integrity, local session-state integrity, path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
+Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces configuration integrity, local session-state integrity, Git index visibility, historical and current path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
 
 ## Acceptance
 
@@ -79,13 +83,14 @@ Acceptance is a separate stage from verification.
 2. the project harness configuration still matches the digest captured at session start;
 3. configured verification completed successfully;
 4. the active session still satisfies its original commit budget;
-5. the verified project configuration digest is unchanged;
-6. Git HEAD is unchanged from the verified state;
-7. the branch is unchanged from the verified state;
-8. the worktree status is unchanged from the verified state;
-9. the Git-visible state fingerprint is unchanged from the verified state;
-10. scope still passes; and
-11. the operator explicitly supplies `--accept` after the required review.
+5. tracked paths do not use `assume-unchanged` or `skip-worktree` to suppress Git visibility;
+6. the verified project configuration digest is unchanged;
+7. Git HEAD is unchanged from the verified state;
+8. the branch is unchanged from the verified state;
+9. the worktree status is unchanged from the verified state;
+10. the Git-visible state fingerprint is unchanged from the verified state;
+11. historical and current scope still pass; and
+12. the operator explicitly supplies `--accept` after the required review.
 
 `--accept` is an operator attestation. V1 does not authenticate the operator's identity or cryptographically prove that a particular human performed the review.
 
