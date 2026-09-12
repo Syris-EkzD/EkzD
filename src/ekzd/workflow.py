@@ -42,6 +42,9 @@ def _origin_remote(root: Path) -> str | None:
 
 def _sanitize_repository_identifier(remote: str) -> str:
     parsed = urlsplit(remote)
+    clean_netloc = parsed.netloc.rsplit("@", 1)[-1]
+    scrubbed = urlunsplit((parsed.scheme, clean_netloc, parsed.path, "", ""))
+
     if parsed.scheme and parsed.hostname:
         host = parsed.hostname
         if ":" in host and not host.startswith("["):
@@ -51,13 +54,13 @@ def _sanitize_repository_identifier(remote: str) -> str:
         path = parsed.path.removesuffix(".git")
         return urlunsplit((parsed.scheme, host, path, "", ""))
 
-    if "@" in remote:
-        _, tail = remote.split("@", 1)
+    if "@" in scrubbed:
+        _, tail = scrubbed.split("@", 1)
         if ":" in tail:
             host, path = tail.split(":", 1)
             return f"{host}/{path.removesuffix('.git')}"
 
-    return remote.removesuffix(".git")
+    return scrubbed.removesuffix(".git")
 
 
 def _frozen_repository_metadata(root: Path) -> dict[str, Any]:
