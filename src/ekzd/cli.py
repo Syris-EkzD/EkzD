@@ -12,11 +12,11 @@ from .core import (
     find_root,
     finish_session,
     init_project,
-    start_session,
     update_handoff,
     verify_session,
 )
 from .ui import failure, header, info, muted, render_context_ui, success, supports_color, warning
+from .workflow import build_implementation_prompt, build_workflow_status, start_reproducible_session
 
 
 def parser() -> argparse.ArgumentParser:
@@ -28,6 +28,15 @@ def parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start", help="Start a scoped work session.")
     start.add_argument("objective")
+    start.add_argument(
+        "--branch",
+        required=True,
+        dest="implementation_branch",
+        help="Dedicated implementation/task branch to use from the frozen baseline.",
+    )
+
+    sub.add_parser("status", help="Show the active workflow state and next action.")
+    sub.add_parser("prompt", help="Render the frozen implementation handoff for the active session.")
 
     context = sub.add_parser("context", help="Render project and session context.")
     context.add_argument("--json", action="store_true", dest="as_json")
@@ -58,6 +67,41 @@ def _print_handoff(handoff: dict[str, object], *, color: bool) -> None:
             print(f"  • {value}")
 
 
+def _print_status(status: dict[str, object], *, color: bool) -> None:
+    print(header("status", enabled=color))
+    session_status = str(status["session_status"])
+    if session_status != "active":
+        print(warning(f"Session: {session_status}", enabled=color))
+        objective = status.get("objective")
+        if objective:
+            print(f"  {objective}")
+        print(info(f"Next: {status['next']}", enabled=color))
+        return
+
+    verification = str(status["verification"])
+    state_line = failure("Session blocked", enabled=color) if verification == "blocked" else success("Session active", enabled=color)
+    print(state_line)
+    print(f"  {status['objective']}")
+    print()
+    print(muted(f"project               {status['project']}", enabled=color))
+    print(muted(f"baseline branch       {status['baseline_branch']}", enabled=color))
+    print(muted(f"implementation branch {status['implementation_branch']}", enabled=color))
+    print(muted(f"current branch        {status['current_branch']}", enabled=color))
+    print(muted(f"baseline HEAD         {str(status['baseline_head'])[:12]}", enabled=color))
+    worktree = "clean" if status["worktree_clean"] else "changed"
+    print(muted(f"worktree              {worktree}", enabled=color))
+    commit_count = status.get("commit_count")
+    commit_label = "unknown" if commit_count is None else str(commit_count)
+    print(muted(f"commits               {commit_label} / {status['max_commits']}", enabled=color))
+    print(muted(f"verification          {verification}", enabled=color))
+    blocked_reason = status.get("blocked_reason")
+    if blocked_reason:
+        print()
+        print(failure(f"Blocked: {blocked_reason}", enabled=color))
+    print()
+    print(info(f"Next: {status['next']}", enabled=color))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     color = supports_color(sys.stdout)
@@ -70,10 +114,22 @@ def main(argv: list[str] | None = None) -> int:
             print(info("Configure scope, acceptance, and verification before starting a session.", enabled=color))
             return 0
         if args.command == "start":
-            state = start_session(root, args.objective)
+            state = start_reproducible_session(
+                root,
+                args.objective,
+                implementation_branch=args.implementation_branch,
+            )
             print(header("session", enabled=color))
             print(success("Session started", enabled=color))
             print(f"  {state['objective']}")
+            print(muted(f"  implementation branch: {state['workflow']['implementation_branch']}", enabled=color))
+            print(info("Next: run `ekzd status` or generate the implementation handoff with `ekzd prompt`.", enabled=color))
+            return 0
+        if args.command == "status":
+            _print_status(build_workflow_status(root), color=color)
+            return 0
+        if args.command == "prompt":
+            print(build_implementation_prompt(root), end="")
             return 0
         if args.command == "context":
             context = build_context(root)
@@ -92,8 +148,10 @@ def main(argv: list[str] | None = None) -> int:
             if verification["passed"]:
                 print(success("Verification passed", enabled=color))
                 print(muted("Bound to the current Git-visible state.", enabled=color))
+                print(info("Next: review the verified changes, then run `ekzd finish --accept` if you approve them.", enabled=color))
                 return 0
             print(failure("Verification failed", enabled=color))
+            print(info("Next: fix the reported failure and rerun `ekzd verify`.", enabled=color))
             return 1
         if args.command == "handoff":
             handoff = update_handoff(root, done=args.done, next_items=args.next_items)
@@ -104,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             print(header("session", enabled=color))
             print(warning("Session aborted without acceptance", enabled=color))
             print(f"  {state['objective']}")
+            print(info('Next: start a fresh task with `ekzd start "<objective>" --branch <task-branch>` when ready.', enabled=color))
             return 0
         if args.command == "finish":
             state = finish_session(root, accept=args.accept)
