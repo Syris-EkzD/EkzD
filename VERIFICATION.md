@@ -11,11 +11,23 @@ EkzD records:
 - the current Git commit (`HEAD`);
 - the current branch;
 - the complete porcelain worktree status;
+- the Git-visible state fingerprint;
 - the project configuration digest;
 - the changed paths considered for scope enforcement;
+- the active session's commit count and configured maximum;
 - each verification command, working directory, exit code, and bounded output.
 
-Verification fails closed when configuration is invalid, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
+Verification fails closed when configuration is invalid, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
+
+## Session budget
+
+Each session has a positive `session.max_commits` limit. The V1 default is 3 commits, and projects may configure a different positive limit before starting a session.
+
+The selected limit is captured when the session starts. Changing the configured budget during an active session does not retroactively enlarge that session; the operator must begin a fresh session to use a different budget.
+
+Verification counts commits reachable from the session's starting `HEAD` to the current `HEAD`. If the current history no longer descends from the recorded starting commit, verification fails instead of guessing how much work belongs to the session.
+
+The commit budget is a bounded-work policy, not a claim that commit count directly measures code quality. Its purpose is to keep one objective reviewable and to create a natural handoff point before unrelated work accumulates.
 
 ## Scope
 
@@ -35,12 +47,14 @@ Acceptance is a separate stage from verification.
 
 1. an active session exists;
 2. configured verification completed successfully;
-3. the project configuration digest is unchanged;
-4. Git HEAD is unchanged;
-5. the branch is unchanged;
-6. the worktree status is unchanged;
-7. scope still passes; and
-8. explicit human approval is supplied with `--accept`.
+3. the active session still satisfies its original commit budget;
+4. the project configuration digest is unchanged;
+5. Git HEAD is unchanged;
+6. the branch is unchanged;
+7. the worktree status is unchanged;
+8. the Git-visible state fingerprint is unchanged;
+9. scope still passes; and
+10. explicit human approval is supplied with `--accept`.
 
 If any project file, configuration entry, branch, commit, or worktree state changes after verification, the prior result becomes stale and verification must be rerun.
 
