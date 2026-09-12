@@ -2,7 +2,54 @@
 
 EkzD is a small, project-agnostic development harness for scoped and verifiable AI-assisted work.
 
-It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working frame for a task, expose the relevant project context, keep each session bounded, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
+It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working contract for a task, expose that contract to the tools or people doing the work, keep each session bounded, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
+
+EkzD is deliberately not the code generator. In the intended V1 workflow, an AI coding session, Codex, or a human produces the changes; EkzD provides the contract and deterministic acceptance gate around that work.
+
+## Recommended V1 workflow
+
+EkzD V1 is designed to work well with separate planning/prompt-generation and code-generation sessions without requiring a daemon, agent router, or model integration.
+
+```text
+You define the objective
+        ↓
+ekzd start "..."
+        ↓
+ekzd context --json
+        ↓
+Prompt-generator session
+        ↓
+implementation prompt
+        ↓
+Code-generator session
+        ↓
+GitHub branch / commits
+        ↓
+GitHub CI
+        ↓
+you pull the latest branch locally
+        ↓
+ekzd verify
+        ↓
+human review
+        ↓
+ekzd finish --accept
+        ↓
+merge
+```
+
+Responsibilities are intentionally separated:
+
+- **You** choose the objective, approve scope changes, review the result, and retain final merge authority.
+- **EkzD** defines the local session contract and deterministically checks the Git-visible result against that contract.
+- **Prompt-generator session** converts the EkzD context and objective into a focused implementation prompt without expanding scope.
+- **Code-generator session** implements the prompt and writes the actual code, usually on a dedicated GitHub branch.
+- **GitHub** carries branches, commits, pull requests, and collaboration history.
+- **CI** independently executes remote checks where appropriate.
+
+The active session state lives in `.ekzd/session.json`, which is intentionally local and gitignored. A coding session operating only through GitHub cannot automatically see that local state. V1 bridges that gap explicitly through `ekzd context --json`, which can be handed to the prompt-generator session as the authoritative task context.
+
+This is a manual bridge by design. V1 does not claim to control an AI's GitHub actions in real time. Instead, it validates the resulting Git state after that work is pulled into the environment where EkzD is running.
 
 ## V1 commands
 
@@ -10,6 +57,7 @@ It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its
 ekzd init
 ekzd start "implement registration validation"
 ekzd context
+ekzd context --json
 ekzd verify
 ekzd handoff --done "implemented validation" --next "review edge cases"
 ekzd finish --accept
@@ -24,6 +72,20 @@ ekzd abort
 `abort` changes only local EkzD session state. It does not revert project files, commits, or Git history, and it never records acceptance.
 
 `ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. The project configuration is committed; session state is local and disposable.
+
+## Terminal interface
+
+EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic status colors, concise section headings, and readable success/failure indicators rather than raw JSON for normal human-facing output.
+
+- green: successful or clean state;
+- red: failure or blocked operation;
+- yellow: warning or aborted/non-accepted state;
+- cyan: headings, accents, and informational markers;
+- dim text: secondary details.
+
+Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. `ekzd context --json` always remains machine-readable JSON without ANSI styling.
+
+EkzD borrows the visual hierarchy of tools such as Codex, but V1 remains a command-oriented CLI rather than a full-screen interactive TUI.
 
 ## Project configuration
 
@@ -81,9 +143,10 @@ EkzD treats verification and acceptance as different stages.
 1. validates the project configuration;
 2. requires it to match the configuration captured when the session started;
 3. enforces the active session's commit budget;
-4. checks changed paths against `scope.include` and `scope.exclude`;
+4. checks changed paths against `scope.include` and `scope.exclude` before verification;
 5. runs verification commands without a shell;
-6. records the exact Git-visible state, session budget, and configuration digest that passed.
+6. checks scope again after verification so verifier-created side effects cannot silently escape the declared scope;
+7. records the exact Git-visible state, session budget, and configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
@@ -100,7 +163,11 @@ The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and un
 
 ## Context and handoff
 
-`ekzd context` renders the current objective, session policy, Git state, sources, scope, authority, acceptance criteria, and verification plan. `--json` provides the same information as structured data for other tools.
+`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the context as structured data for prompt generators and other tools.
+
+The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
+
+Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: configuration integrity, Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
 
 `ekzd handoff` records semantic progress (`--done`) and next actions (`--next`) in the local session state. It does not modify project documentation automatically.
 
@@ -113,9 +180,11 @@ V1 deliberately stays small:
 - no model/API integration;
 - no network operations;
 - no autonomous commits, pushes, merges, or deployments;
+- no real-time interception of an AI's GitHub writes;
+- no claim that free-text authority rules are mechanically understood;
 - no claim that deterministic checks can prove semantic correctness.
 
-GitHub Actions can provide remote verification for repositories that need dependencies or services unavailable in a local/session environment. EkzD remains the harness; CI remains the execution/verification service.
+GitHub Actions can provide remote verification for repositories that need dependencies or services unavailable in a local/session environment. EkzD remains the harness; CI remains an independent execution/verification service.
 
 ## Development
 
