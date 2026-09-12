@@ -212,6 +212,19 @@ def load_config(root: Path, *, ready: bool = True) -> dict[str, Any]:
     return validate_config(data, root, ready=ready)
 
 
+def committed_config_bytes(root: Path) -> bytes:
+    return run_git_bytes(root, "show", f"HEAD:{CONFIG_RELATIVE.as_posix()}")
+
+
+def load_committed_config(root: Path, *, ready: bool = True) -> dict[str, Any]:
+    ensure_project_config_committed_clean(root)
+    try:
+        data = tomllib.loads(committed_config_bytes(root).decode("utf-8"))
+    except (UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise HarnessError(f"Unable to read committed {CONFIG_RELATIVE}: {exc}") from exc
+    return validate_config(data, root, ready=ready)
+
+
 def read_state(root: Path) -> dict[str, Any] | None:
     ensure_session_state_untracked(root)
     path = root / STATE_RELATIVE
@@ -321,8 +334,8 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
     objective = objective.strip()
     if not objective:
         raise HarnessError("Objective cannot be empty.")
-    config = load_config(root, ready=True)
     ensure_project_config_committed_clean(root)
+    config = load_committed_config(root, ready=True)
     existing = read_state(root)
     if existing and existing.get("status") == "active":
         raise HarnessError("An active EkzD session already exists. Finish or abort it before starting another.")
@@ -345,11 +358,13 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
 
 
 def build_context(root: Path) -> dict[str, Any]:
-    config = load_config(root, ready=True)
     state = read_state(root)
     if state and state.get("status") == "active":
         enforce_session_contract(root, state)
         enforce_protected_session_history(root, _session_start_head(state))
+        config = load_committed_config(root, ready=True)
+    else:
+        config = load_config(root, ready=True)
     return {
         "schema_version": SCHEMA_VERSION,
         "project": config["project"],
@@ -390,7 +405,7 @@ def render_context(context: dict[str, Any]) -> str:
 
 
 def config_digest(root: Path) -> str:
-    return hashlib.sha256((root / CONFIG_RELATIVE).read_bytes()).hexdigest()
+    return hashlib.sha256(committed_config_bytes(root)).hexdigest()
 
 
 def _decode_git_paths(output: bytes) -> set[str]:
@@ -511,11 +526,11 @@ def enforce_session_budget(root: Path, config: dict[str, Any], state: dict[str, 
 
 
 def verify_session(root: Path) -> dict[str, Any]:
-    config = load_config(root, ready=True)
     state = _active_state(root)
     state_digest = session_state_digest(root)
     start_head = _session_start_head(state)
     enforce_session_contract(root, state)
+    config = load_committed_config(root, ready=True)
     budget = enforce_session_budget(root, config, state)
     enforce_protected_session_history(root, start_head)
     paths = enforce_scope(root, config, start_head=start_head)
@@ -561,11 +576,11 @@ def verify_session(root: Path) -> dict[str, Any]:
         if not result["passed"]:
             break
 
-    config = load_config(root, ready=True)
     current_state = _active_state(root)
     if current_state != state or session_state_digest(root) != state_digest:
         raise HarnessError("EkzD session state changed during verification; verification cannot trust a modified session contract.")
     enforce_session_contract(root, state)
+    config = load_committed_config(root, ready=True)
     budget = enforce_session_budget(root, config, state)
     enforce_protected_session_history(root, start_head)
     paths = enforce_scope(root, config, start_head=start_head)
@@ -608,10 +623,10 @@ def abort_session(root: Path) -> dict[str, Any]:
 def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
     if not accept:
         raise HarnessError("Acceptance requires explicit `ekzd finish --accept` approval.")
-    config = load_config(root, ready=True)
     state = _active_state(root)
     start_head = _session_start_head(state)
     enforce_session_contract(root, state)
+    config = load_committed_config(root, ready=True)
     verification = state.get("verification")
     if not isinstance(verification, dict) or not verification.get("passed"):
         raise HarnessError("Acceptance blocked: verification has not passed.")
