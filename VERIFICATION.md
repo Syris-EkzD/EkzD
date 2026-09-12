@@ -14,12 +14,14 @@ EkzD records:
 - the Git-visible state fingerprint;
 - the project configuration digest;
 - the changed paths considered for scope enforcement;
-- the active session's commit count and configured maximum;
+- the active session's final commit count and configured maximum;
 - each verification command, working directory, exit code, and bounded output.
 
-Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
+Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, a configured command cannot be launched, or any configured command fails.
 
-Scope is checked both before and after the configured verification commands run. This prevents a successful verifier from silently creating or modifying Git-visible files outside the declared session scope. A verifier-created scope violation invalidates verification even if every configured command exited successfully.
+Before commands run, EkzD validates the ready project configuration, active session contract, commit budget, and changed-path scope. After the configured commands finish, EkzD reloads the ready configuration and active session and rechecks the frozen configuration digest, commit budget, and scope before recording verification evidence. This prevents a verifier from silently changing the contract, exceeding the session budget, or creating Git-visible changes outside the declared scope while still producing a green verification result.
+
+Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git rename collapsing for scope evaluation so both sides of a move are evaluated independently, and it parses Git paths without relying on newline-delimited or quoted output.
 
 ## Immutable session contract
 
@@ -70,14 +72,16 @@ Acceptance is a separate stage from verification.
 3. configured verification completed successfully;
 4. the active session still satisfies its original commit budget;
 5. the verified project configuration digest is unchanged;
-6. Git HEAD is unchanged;
-7. the branch is unchanged;
-8. the worktree status is unchanged;
-9. the Git-visible state fingerprint is unchanged;
+6. Git HEAD is unchanged from the verified state;
+7. the branch is unchanged from the verified state;
+8. the worktree status is unchanged from the verified state;
+9. the Git-visible state fingerprint is unchanged from the verified state;
 10. scope still passes; and
-11. explicit human approval is supplied with `--accept`.
+11. the operator explicitly supplies `--accept` after the required review.
 
-If any Git-visible tracked, staged, unstaged, or untracked project state changes after verification, the prior result becomes stale and verification must be rerun.
+`--accept` is an operator attestation. V1 does not authenticate the operator's identity or cryptographically prove that a particular human performed the review.
+
+Acceptance requires the current Git-visible tracked, staged, unstaged, and untracked project state to exactly match the state bound to the successful verification. If the current state differs, the prior verification cannot be accepted and verification must be rerun.
 
 Git-ignored files are outside V1's exact-state fingerprint. A project that needs an ignored file to affect acceptance must check that requirement through a configured verification command. V1 does not recursively hash every ignored file by default.
 
@@ -85,7 +89,7 @@ Git-ignored files are outside V1's exact-state fingerprint. A project that needs
 
 Passing verification does not prove that requirements were interpreted correctly, that tests are complete, that free-text project guidance was followed semantically, or that a change is desirable. Acceptance criteria may include product and code-quality judgments that require human review.
 
-EkzD therefore records explicit approval rather than treating a successful command as automatic authorization to merge or deploy.
+EkzD therefore records explicit operator acceptance rather than treating a successful command as automatic authorization to merge or deploy.
 
 ## V1 portability rule
 
