@@ -62,6 +62,139 @@ def _list_items(values: list[str], *, enabled: bool) -> list[str]:
     return [f"  {paint('•', CYAN, enabled=enabled)} {value}" for value in values]
 
 
+def _next_lines(message: str, *, enabled: bool) -> list[str]:
+    return ["", _section("Next", enabled=enabled), f"  {paint('›', CYAN, enabled=enabled)} {message}"]
+
+
+def _tone_line(message: str, tone: str, *, enabled: bool) -> str:
+    if tone == "success":
+        return success(message, enabled=enabled)
+    if tone == "warning":
+        return warning(message, enabled=enabled)
+    if tone == "failure":
+        return failure(message, enabled=enabled)
+    return info(message, enabled=enabled)
+
+
+def render_command_summary(
+    label: str,
+    headline: str,
+    *,
+    tone: str,
+    details: list[tuple[str, str]] | None = None,
+    next_action: str | None = None,
+    enabled: bool,
+) -> str:
+    lines = [header(label, enabled=enabled), _tone_line(headline, tone, enabled=enabled)]
+    if details:
+        lines.append("")
+        lines.extend(_meta(key, value, enabled=enabled) for key, value in details)
+    if next_action:
+        lines.extend(_next_lines(next_action, enabled=enabled))
+    return "\n".join(lines) + "\n"
+
+
+def render_handoff_ui(handoff: dict[str, object], *, enabled: bool) -> str:
+    lines = [header("handoff", enabled=enabled), success("Handoff updated", enabled=enabled)]
+    rendered_any = False
+    for label in ("done", "next"):
+        values = handoff.get(label, [])
+        if not isinstance(values, list) or not values:
+            continue
+        if not rendered_any:
+            lines.append("")
+            rendered_any = True
+        lines.append(_section(label.capitalize(), enabled=enabled))
+        lines.extend(_list_items([str(value) for value in values], enabled=enabled))
+    return "\n".join(lines) + "\n"
+
+
+def _verification_value(state: str, *, enabled: bool) -> str:
+    if state == "passed":
+        return paint(state, GREEN, enabled=enabled)
+    if state in {"failed", "blocked"}:
+        return paint(state, RED, enabled=enabled)
+    if state == "stale":
+        return paint(state, YELLOW, enabled=enabled)
+    return muted(state, enabled=enabled)
+
+
+def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
+    lines = [header("status", enabled=enabled)]
+    session_status = str(status["session_status"])
+    if session_status != "active":
+        lines.append(warning(f"Session: {session_status}", enabled=enabled))
+        objective = status.get("objective")
+        if objective:
+            lines.extend(["", _meta("objective", str(objective), enabled=enabled)])
+        lines.extend(_next_lines(str(status["next"]), enabled=enabled))
+        return "\n".join(lines) + "\n"
+
+    verification = str(status["verification"])
+    lines.append(
+        failure("Session blocked", enabled=enabled)
+        if verification == "blocked"
+        else success("Session active", enabled=enabled)
+    )
+    lines.extend(
+        [
+            "",
+            _meta("objective", str(status["objective"]), enabled=enabled),
+            _meta("verification", _verification_value(verification, enabled=enabled), enabled=enabled),
+            "",
+            _section("Branches", enabled=enabled),
+            _meta("baseline", str(status["baseline_branch"]), enabled=enabled),
+            _meta("implementation", str(status["implementation_branch"]), enabled=enabled),
+            _meta("current", str(status["current_branch"]), enabled=enabled),
+            "",
+            _section("Repository", enabled=enabled),
+            _meta("baseline HEAD", str(status["baseline_head"])[:12], enabled=enabled),
+            _meta("worktree", "clean" if status["worktree_clean"] else "changed", enabled=enabled),
+        ]
+    )
+    commit_count = status.get("commit_count")
+    commit_label = "unknown" if commit_count is None else str(commit_count)
+    lines.append(_meta("commits", f"{commit_label} / {status['max_commits']}", enabled=enabled))
+
+    blocked_reason = status.get("blocked_reason")
+    if blocked_reason:
+        lines.extend(["", _section("Blocked", enabled=enabled), f"  {failure(str(blocked_reason), enabled=enabled)}"])
+
+    lines.extend(_next_lines(str(status["next"]), enabled=enabled))
+    return "\n".join(lines) + "\n"
+
+
+def render_verification_ui(verification: dict[str, Any], *, enabled: bool) -> str:
+    lines = [header("verify", enabled=enabled), _section("Steps", enabled=enabled)]
+    steps = verification.get("steps", [])
+    if not steps:
+        lines.extend(_list_items([], enabled=enabled))
+    else:
+        for step in steps:
+            message = str(step["name"])
+            lines.append(f"  {success(message, enabled=enabled) if step['passed'] else failure(message, enabled=enabled)}")
+
+    passed = bool(verification.get("passed"))
+    lines.extend(
+        [
+            "",
+            _section("Result", enabled=enabled),
+            f"  {success('Verification passed', enabled=enabled) if passed else failure('Verification failed', enabled=enabled)}",
+        ]
+    )
+    if passed:
+        lines.append(f"  {muted('Bound to the current Git-visible state.', enabled=enabled)}")
+        lines.extend(
+            _next_lines(
+                "Review the verified changes, then run `ekzd finish --accept` if you approve them.",
+                enabled=enabled,
+            )
+        )
+    else:
+        lines.extend(_next_lines("Fix the reported failure and rerun `ekzd verify`.", enabled=enabled))
+    return "\n".join(lines) + "\n"
+
+
 def render_context_ui(context: dict[str, Any], *, enabled: bool) -> str:
     project = context["project"]["name"]
     objective = context.get("objective") or "(no active session)"
