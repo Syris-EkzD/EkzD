@@ -1,6 +1,6 @@
 # EkzD Verification and Acceptance Standard
 
-This document defines the V1 acceptance contract. It is intentionally stricter than simply running tests once.
+This document defines the V1 acceptance contract and the V1.1 workflow that carries work into that contract. It is intentionally stricter than simply running tests once.
 
 ## Verification
 
@@ -15,7 +15,7 @@ EkzD records:
 - the committed project configuration digest;
 - the changed paths considered for scope enforcement;
 - the active session's final commit count and configured maximum;
-- each verification command, working directory, exit code, and bounded output.
+- each verification command argv array, working directory, exit code, and bounded output.
 
 Verification fails closed when configuration is invalid, uncommitted, staged, unstaged, changed after session start, or historically touched during the active session; when the session commit budget is exceeded; when scope is violated; when tracked paths use Git index flags that suppress normal change visibility; when any tracked path has an active Git `filter` attribute; when local session state is tracked or changes during verification; when a working directory escapes the repository; when a command times out; when a configured command cannot be launched; or when any configured command fails.
 
@@ -25,7 +25,7 @@ Changed-path discovery is rename-safe and NUL-delimited. EkzD disables Git renam
 
 ## Canonical project contract
 
-`.ekzd/project.toml` is V1's canonical project contract. Before `ekzd start`, it must already exist in `HEAD` as a regular tracked file and must have no staged or unstaged changes. V1 intentionally does not support starting a session from an untracked, staged-only, locally dirty, or symlinked project contract.
+`.ekzd/project.toml` is V1's canonical project contract. Before `ekzd start`, it must already exist in `HEAD` as a regular tracked file and must have no staged or unstaged changes. V1 intentionally does not support starting a session from an untracked, staged-only, locally dirty, or symlinked project contract. The V1.1 CLI additionally requires the repository working tree to be clean before starting so the frozen baseline can be reproduced by a separate implementation environment.
 
 For active-session semantics, the committed Git blob is authoritative. EkzD parses and hashes the raw `HEAD:.ekzd/project.toml` bytes rather than the worktree copy. Ordinary checkout transformations such as line-ending conversion cannot redefine the scope, authority, sources, session policy, acceptance criteria, or verification commands EkzD enforces.
 
@@ -33,7 +33,15 @@ V1 rejects any tracked path with an active Git `filter` attribute. Clean/smudge 
 
 This gives the single-operator workflow one reproducible definition of the harness contract inside a conventional supported checkout. GitHub, CI, `ekzd context --json`, local verification, and final acceptance all anchor to the same committed blob, while the worktree and index path are still required to remain clean so active-session edits cannot be silently introduced.
 
-When `ekzd start` creates a session, it records the digest of the raw committed `.ekzd/project.toml` blob. While that session is active, `ekzd context`, `ekzd verify`, and `ekzd finish --accept` require the path to remain clean and the committed blob digest to match the recorded digest. If configuration must change, abort or finish the session first, edit and commit the configuration outside an active session, then start a fresh session.
+When `ekzd start` creates a session, it records the digest of the raw committed `.ekzd/project.toml` blob. While that session is active, `ekzd context`, `ekzd prompt`, `ekzd verify`, and `ekzd finish --accept` require the path to remain clean and the committed blob digest to match the recorded digest. If configuration must change, abort or finish the session first, edit and commit the configuration outside an active session, then start a fresh session.
+
+## V1.1 portable workflow metadata
+
+The V1.1 CLI requires an explicit implementation/task branch through `ekzd start "..." --branch <task-branch>`. This branch is stored separately from the baseline branch and baseline `HEAD`. A non-detached baseline branch cannot also be declared as the implementation branch, preventing a session started on `main` from producing a handoff that instructs direct implementation on `main`. A detached baseline remains representable, but the implementation branch must still be a real declared Git branch name.
+
+At session start EkzD reads `remote.origin.url` when available, sanitizes it, and stores the resulting repository identifier in local session metadata. Userinfo, credentials, query parameters, and fragments are excluded from the rendered identifier. If no origin exists, the session records that no remote locator was available rather than inventing one. Because the value is captured at session start, changing or removing `origin` later does not change `ekzd prompt`.
+
+This workflow metadata remains in `.ekzd/session.json`; it is not added to `.ekzd/project.toml` and does not make GitHub part of the trust boundary. EkzD still performs no GitHub authentication or network orchestration.
 
 ## Protected harness history
 
@@ -42,7 +50,7 @@ V1 protects exactly two trust-critical paths from active-session commit history:
 - `.ekzd/project.toml`;
 - `.ekzd/session.json`.
 
-This protection is independent of `scope.include` and `scope.exclude`. A repo-wide project scope such as `include = ["*"]` does not authorize committing either protected path while a session is active. If either path appears in any commit reachable in the active session range, that session is invalid even when a later commit restores or untracks the file.
+This protection is independent of `scope.include` and `scope.exclude`. A repo-wide project scope such as `include = ["*"]` does not authorize committing either path while a session is active. If either path appears in any commit reachable in the active session range, that session is invalid even when a later commit restores or untracks the file.
 
 The protected set is intentionally limited to these two files rather than the entire `.ekzd/` directory. Future non-trust-critical EkzD artifacts may therefore evolve without inheriting a blanket history prohibition. Adding another trust-critical harness file in a future version requires explicitly adding it to the protected set.
 
@@ -51,6 +59,8 @@ The historical rule is stricter than the current-byte digest alone: committing `
 ## Session-state integrity
 
 `.ekzd/session.json` is trusted operator-local harness metadata. It must remain untracked by Git and must never appear in active-session commit history. EkzD refuses to read or write session state while the path is currently tracked, and protected-history enforcement also rejects a session where the file was committed and later removed from tracking.
+
+V1.1 stores the explicit implementation branch and frozen sanitized repository identity in this local session state alongside the objective, baseline Git state, session policy, verification evidence, and acceptance state. A portable implementation handoff therefore does not need to infer those values from later mutable Git configuration.
 
 At the start of verification, EkzD keeps the parsed session contract in memory and records the local state file digest. Verification commands may run ordinary project code, so after they finish EkzD requires the on-disk session state to still match the state that existed before the commands ran. Post-verification budget and scope checks use the original pinned session contract rather than trusting a replacement baseline written by the verifier.
 
@@ -67,6 +77,20 @@ Verification counts commits reachable from the session's starting `HEAD` to the 
 The commit budget is a bounded-work policy, not a claim that commit count directly measures code quality. Its purpose is to keep one objective reviewable and to create a natural handoff point before unrelated work accumulates.
 
 If a session exceeds its budget or otherwise cannot be completed under its original contract, `ekzd abort` closes it without acceptance. Aborting changes only local EkzD session state; it does not revert project files, commits, or Git history.
+
+## Workflow status guidance
+
+`ekzd status` is advisory workflow guidance layered on top of the same fail-closed trust checks. For an active V1.1 session it distinguishes the baseline branch and `HEAD`, declared implementation branch, and current branch rather than collapsing them into one ambiguous branch value.
+
+The workflow-facing verification state is reported as:
+
+- `not run` when no relevant verification attempt has been recorded;
+- `passed` only when verification succeeded and the current exact supported Git-visible state still matches the verified state;
+- `stale` when verification previously passed but the Git state or exact-state fingerprint changed afterward;
+- `failed` when the most recent verification attempt failed; and
+- `blocked` for explicitly handled session-invalid conditions where recommending another normal verification would be misleading.
+
+An exceeded commit budget and history that no longer descends from the frozen baseline are reported as `blocked` with guidance to abort and restore/restart from a contract-valid baseline. This does not weaken verification: `ekzd verify` and `ekzd finish --accept` continue to enforce their existing fail-closed rules independently of status output.
 
 ## Scope
 
@@ -86,17 +110,21 @@ EkzD also rejects every tracked path whose resolved Git `filter` attribute is ac
 
 ## Context integrity
 
-`ekzd context` and `ekzd context --json` are part of the active contract, not merely convenience renderers. When a session is active, EkzD refuses to emit context unless the canonical path is still clean, the committed `HEAD` blob still matches the session-start digest, `.ekzd/project.toml` has not appeared in active-session commit history, and the repository remains within V1's supported Git visibility model. The context itself is parsed from that committed blob rather than the worktree copy.
+`ekzd context` and `ekzd context --json` are part of the active committed project contract, not merely convenience renderers. When a session is active, EkzD refuses to emit context unless the canonical path is still clean, the committed `HEAD` blob still matches the session-start digest, `.ekzd/project.toml` has not appeared in active-session commit history, and the repository remains within V1's supported Git visibility model. The context itself is parsed from that committed blob rather than the worktree copy.
 
-This matters because sources, authority, and free-text constraints are intentionally contextual rather than semantically enforced by V1. The prompt-generator must therefore receive the same committed frozen contract that later verification and acceptance use.
+This matters because sources, authority, and free-text constraints are intentionally contextual rather than semantically enforced by V1. `ekzd prompt` combines that same committed frozen contract with the V1.1 portable workflow metadata captured in local session state, so the implementation handoff does not require a separate prompt-generator session to reinterpret the contract.
+
+`ekzd context --json` remains available as the lower-level structured interface for tools that need machine-readable project-contract data.
 
 ## AI-assisted operating model
 
 EkzD does not need to be the code generator to enforce this standard.
 
-In the recommended V1 workflow, the local EkzD session defines the contract, `ekzd context --json` is handed to a prompt-generation/planning session, and a separate coding session implements the resulting prompt through GitHub. The resulting branch is then pulled into the environment where EkzD is running and verified against the original local contract.
+In the recommended V1.1 workflow, the user and maintainer/planning session define the objective and contract. The operator starts a clean local EkzD session with an explicit task branch. `ekzd prompt` then renders the normal deterministic implementation handoff. A separate implementation session consumes that handoff, operates from the exact frozen baseline on the declared task branch, implements the scoped change, runs available checks, fixes failures, self-reviews, and pushes/updates the task branch and pull request when its environment supports those repository operations.
 
-This means V1 provides deterministic post-work enforcement rather than real-time control over a remote AI session. A remote code generator can technically create an invalid commit; EkzD's responsibility is to refuse verification or acceptance when that Git-visible result violates the measurable contract.
+The implementation handoff explicitly prohibits merging. If the implementation environment cannot push or create/update a PR, it must report that limitation instead of claiming the operation happened. Authoritative `ekzd verify` remains in the maintainer environment that owns `.ekzd/session.json`, and final merge/reject authority remains with the operator after review.
+
+This means V1.1 still provides deterministic post-work enforcement rather than real-time control over a remote AI session. A remote code generator can technically create an invalid commit; EkzD's responsibility is to refuse verification or acceptance when that Git-visible result violates the measurable contract. EkzD does not authenticate to GitHub, open PRs itself, route agents, or autonomously merge work.
 
 Free-text authority, source, and constraint entries remain instructions for the AI or human operator. The V1 verifier mechanically enforces canonical configuration integrity, protected harness-history integrity, local session-state integrity, supported Git visibility, historical and current path scope, session commit budget, configured commands, exact-state binding, and explicit acceptance.
 
@@ -122,7 +150,7 @@ Acceptance is a separate stage from verification.
 
 `--accept` is an operator attestation. V1 does not authenticate the operator's identity or cryptographically prove that a particular human performed the review.
 
-Acceptance requires the current tracked, staged, unstaged, and untracked state to exactly match the state bound to successful verification within V1's supported conventional checkout model. If the current state differs, the prior verification cannot be accepted and verification must be rerun.
+Acceptance requires the current tracked, staged, unstaged, and untracked state to exactly match the state bound to successful verification within V1's supported conventional checkout model. If the current state differs, the prior verification cannot be accepted and verification must be rerun. The `stale` state shown by `ekzd status` mirrors this rule for operator guidance; it does not replace the acceptance checks themselves.
 
 Git-ignored files are outside V1's exact-state fingerprint. A project that needs an ignored file to affect acceptance must check that requirement through a configured verification command. V1 does not recursively hash every ignored file by default. Tracked files with active content filters are rejected rather than accepted under a transformed Git representation.
 
@@ -134,7 +162,7 @@ EkzD therefore records explicit operator acceptance rather than treating a succe
 
 ## V1 portability rule
 
-Project configuration must use repository-relative paths and command arrays. EkzD runs commands directly without a shell. This keeps command behavior deterministic and avoids shell interpolation becoming part of the harness contract.
+Project configuration must use repository-relative paths and command arrays. EkzD runs commands directly without a shell. This keeps command behavior deterministic and avoids shell interpolation becoming part of the harness contract. `ekzd prompt` renders configured verification commands as JSON argv arrays plus their working directories so the implementation handoff preserves argument boundaries rather than presenting an ambiguous shell-like string.
 
 V1 assumes a conventional checkout: no active tracked-file content filters or Git LFS, no `assume-unchanged`, and no `skip-worktree`/sparse-checkout state. Future versions may add stronger support for transformed or virtualized working trees, but V1 fails closed instead of guessing how such features affect scope or exact-state evidence.
 
