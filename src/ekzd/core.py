@@ -81,8 +81,50 @@ def ensure_index_paths_visible(root: Path) -> None:
         )
 
 
-def ensure_project_config_committed_clean(root: Path) -> None:
+def filtered_tracked_paths(root: Path) -> list[str]:
+    tracked = [path for path in run_git_bytes(root, "ls-files", "-z").split(b"\0") if path]
+    if not tracked:
+        return []
+    result = subprocess.run(
+        ["git", "check-attr", "-z", "--stdin", "filter"],
+        cwd=root,
+        input=b"".join(path + b"\0" for path in tracked),
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip() or result.stdout.decode("utf-8", errors="replace").strip()
+        raise HarnessError(f"git check-attr filter failed: {detail}")
+    fields = result.stdout.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 3 != 0:
+        raise HarnessError("Unable to parse Git filter attributes.")
+    filtered: set[str] = set()
+    for index in range(0, len(fields), 3):
+        path, attribute, value = fields[index : index + 3]
+        if attribute != b"filter":
+            raise HarnessError("Unable to parse Git filter attributes.")
+        if value not in {b"unspecified", b"unset"}:
+            filtered.add(path.decode("utf-8", errors="surrogateescape"))
+    return sorted(filtered)
+
+
+def ensure_tracked_paths_unfiltered(root: Path) -> None:
+    filtered = filtered_tracked_paths(root)
+    if filtered:
+        raise HarnessError(
+            "Git content filters are unsupported for tracked files in EkzD V1; remove the filter attribute before continuing:\n- "
+            + "\n- ".join(filtered)
+        )
+
+
+def ensure_git_visibility_supported(root: Path) -> None:
     ensure_index_paths_visible(root)
+    ensure_tracked_paths_unfiltered(root)
+
+
+def ensure_project_config_committed_clean(root: Path) -> None:
+    ensure_git_visibility_supported(root)
     path = CONFIG_RELATIVE.as_posix()
     tree_entry = run_git(root, "ls-tree", "HEAD", "--", path)
     if not tree_entry:
@@ -258,7 +300,7 @@ def session_state_digest(root: Path) -> str:
 
 
 def git_state(root: Path) -> dict[str, Any]:
-    ensure_index_paths_visible(root)
+    ensure_git_visibility_supported(root)
     return {
         "head": run_git(root, "rev-parse", "HEAD"),
         "branch": run_git(root, "branch", "--show-current") or "(detached)",
@@ -267,7 +309,7 @@ def git_state(root: Path) -> dict[str, Any]:
 
 
 def git_state_fingerprint(root: Path) -> str:
-    ensure_index_paths_visible(root)
+    ensure_git_visibility_supported(root)
     digest = hashlib.sha256()
     components = (
         ("head", ("rev-parse", "HEAD")),
@@ -437,7 +479,7 @@ def enforce_protected_session_history(root: Path, start_head: str) -> None:
 
 
 def changed_paths(root: Path, *, start_head: str | None = None) -> list[str]:
-    ensure_index_paths_visible(root)
+    ensure_git_visibility_supported(root)
     committed: set[str] = set()
     if start_head is not None:
         committed = session_history_paths(root, start_head)
