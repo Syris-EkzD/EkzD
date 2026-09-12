@@ -29,6 +29,59 @@ class CliPresentationTests(unittest.TestCase):
             code = cli.main(argv)
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def test_no_subcommand_tty_enters_interactive_shell(self) -> None:
+        stdin = TtyBuffer()
+        stdout = TtyBuffer()
+        stderr = TtyBuffer()
+        with (
+            mock.patch.object(cli.sys, "stdin", stdin),
+            mock.patch.object(cli.sys, "stdout", stdout),
+            mock.patch.object(cli.sys, "stderr", stderr),
+            mock.patch.object(cli, "find_root", return_value=Path("/repo")),
+            mock.patch.object(cli, "run_interactive", return_value=0) as run_interactive,
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            code = cli.main([])
+
+        self.assertEqual(0, code)
+        run_interactive.assert_called_once_with(Path("/repo"), enabled=True)
+        self.assertEqual("", stderr.getvalue())
+
+    def test_no_subcommand_non_tty_never_enters_interactive_shell(self) -> None:
+        stdin = io.StringIO()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(cli.sys, "stdin", stdin),
+            mock.patch.object(cli.sys, "stdout", stdout),
+            mock.patch.object(cli.sys, "stderr", stderr),
+            mock.patch.object(cli, "run_interactive") as run_interactive,
+        ):
+            code = cli.main([])
+
+        self.assertNotEqual(0, code)
+        run_interactive.assert_not_called()
+        self.assertIn("non-interactive", stderr.getvalue())
+        self.assertIn("ekzd --help", stderr.getvalue())
+        self.assertNotIn("\x1b[", stderr.getvalue())
+
+    def test_no_subcommand_no_color_passes_plain_mode_to_interactive_shell(self) -> None:
+        stdin = TtyBuffer()
+        stdout = TtyBuffer()
+        stderr = TtyBuffer()
+        with (
+            mock.patch.object(cli.sys, "stdin", stdin),
+            mock.patch.object(cli.sys, "stdout", stdout),
+            mock.patch.object(cli.sys, "stderr", stderr),
+            mock.patch.object(cli, "find_root", return_value=Path("/repo")),
+            mock.patch.object(cli, "run_interactive", return_value=0) as run_interactive,
+            mock.patch.dict(os.environ, {"NO_COLOR": "1"}, clear=True),
+        ):
+            code = cli.main([])
+
+        self.assertEqual(0, code)
+        run_interactive.assert_called_once_with(Path("/repo"), enabled=False)
+
     def test_prompt_remains_exact_plain_contract_output(self) -> None:
         contract = "Repository: github.com/example/demo\nObjective\n\nDo the thing.\n"
         with mock.patch.object(cli, "build_implementation_prompt", return_value=contract):

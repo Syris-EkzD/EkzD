@@ -11,6 +11,8 @@ GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
 
+INTERACTIVE_INTRO = "EkzD guides a scoped development task through implementation, verification, and explicit acceptance."
+
 
 def supports_color(stream: TextIO) -> bool:
     if os.environ.get("NO_COLOR") is not None or os.environ.get("TERM") == "dumb":
@@ -168,6 +170,33 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
         lines.extend(["", _section("Blocked", enabled=enabled), f"  {failure(str(blocked_reason), enabled=enabled)}"])
 
     lines.extend(_next_lines(str(status["next"]), enabled=enabled))
+    return "\n".join(lines) + "\n"
+
+
+def render_interactive_home(
+    project: str,
+    status: dict[str, object],
+    actions: list[str],
+    *,
+    enabled: bool,
+) -> str:
+    session_status = str(status.get("session_status") or "none")
+    lines = [
+        header("interactive", enabled=enabled),
+        INTERACTIVE_INTRO,
+        "",
+        _meta("project", project, enabled=enabled),
+        _meta("session", session_status, enabled=enabled),
+    ]
+    objective = status.get("objective")
+    if objective:
+        lines.append(_meta("task", str(objective), enabled=enabled))
+    verification = status.get("verification")
+    if verification is not None:
+        lines.append(_meta("verification", _verification_value(str(verification), enabled=enabled), enabled=enabled))
+    lines.extend(_next_lines(str(status.get("next") or "Choose an action below."), enabled=enabled))
+    lines.extend(["", _section("Actions", enabled=enabled)])
+    lines.extend(f"  {index}. {label}" for index, label in enumerate(actions, start=1))
     return "\n".join(lines) + "\n"
 
 
