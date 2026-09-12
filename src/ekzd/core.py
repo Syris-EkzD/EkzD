@@ -13,6 +13,12 @@ CONFIG_RELATIVE = Path(".ekzd/project.toml")
 STATE_RELATIVE = Path(".ekzd/session.json")
 SCHEMA_VERSION = 1
 DEFAULT_MAX_COMMITS = 3
+PROTECTED_SESSION_HISTORY_PATHS = frozenset(
+    {
+        CONFIG_RELATIVE.as_posix(),
+        STATE_RELATIVE.as_posix(),
+    }
+)
 
 
 class HarnessError(RuntimeError):
@@ -363,27 +369,40 @@ def _decode_git_paths(output: bytes) -> set[str]:
     return {raw.decode("utf-8", errors="surrogateescape") for raw in output.split(b"\0") if raw}
 
 
+def session_history_paths(root: Path, start_head: str) -> set[str]:
+    return _decode_git_paths(
+        run_git_bytes(
+            root,
+            "log",
+            "-m",
+            "--format=",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            f"{start_head}..HEAD",
+        )
+    )
+
+
+def enforce_protected_session_history(root: Path, start_head: str) -> None:
+    protected = sorted(PROTECTED_SESSION_HISTORY_PATHS & session_history_paths(root, start_head))
+    if protected:
+        raise HarnessError(
+            "Protected EkzD harness files were committed during the active session; abort and start a fresh session:\n- "
+            + "\n- ".join(protected)
+        )
+
+
 def changed_paths(root: Path, *, start_head: str | None = None) -> list[str]:
     ensure_index_paths_visible(root)
     committed: set[str] = set()
     if start_head is not None:
-        committed = _decode_git_paths(
-            run_git_bytes(
-                root,
-                "log",
-                "-m",
-                "--format=",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                f"{start_head}..HEAD",
-            )
-        )
+        committed = session_history_paths(root, start_head)
     tracked = _decode_git_paths(run_git_bytes(root, "diff", "--name-only", "--no-renames", "-z"))
     staged = _decode_git_paths(run_git_bytes(root, "diff", "--cached", "--name-only", "--no-renames", "-z"))
     untracked = _decode_git_paths(run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z"))
-    ignored = {STATE_RELATIVE.as_posix()}
-    return sorted(path for path in committed | tracked | staged | untracked if path and path not in ignored)
+    untracked.discard(STATE_RELATIVE.as_posix())
+    return sorted(path for path in committed | tracked | staged | untracked if path)
 
 
 def _matches_scope(path: str, pattern: str) -> bool:
@@ -466,9 +485,11 @@ def verify_session(root: Path) -> dict[str, Any]:
     config = load_config(root, ready=True)
     state = _active_state(root)
     state_digest = session_state_digest(root)
+    start_head = _session_start_head(state)
     enforce_session_contract(root, state)
     budget = enforce_session_budget(root, config, state)
-    paths = enforce_scope(root, config, start_head=_session_start_head(state))
+    enforce_protected_session_history(root, start_head)
+    paths = enforce_scope(root, config, start_head=start_head)
     results: list[dict[str, Any]] = []
     for step in config["verification"]["steps"]:
         cwd = (root / step.get("cwd", ".")).resolve()
@@ -517,7 +538,8 @@ def verify_session(root: Path) -> dict[str, Any]:
         raise HarnessError("EkzD session state changed during verification; verification cannot trust a modified session contract.")
     enforce_session_contract(root, state)
     budget = enforce_session_budget(root, config, state)
-    paths = enforce_scope(root, config, start_head=_session_start_head(state))
+    enforce_protected_session_history(root, start_head)
+    paths = enforce_scope(root, config, start_head=start_head)
     passed = len(results) == len(config["verification"]["steps"]) and all(item["passed"] for item in results)
     verification = {
         "verified_at": utc_now(),
@@ -559,6 +581,7 @@ def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
         raise HarnessError("Acceptance requires explicit `ekzd finish --accept` approval.")
     config = load_config(root, ready=True)
     state = _active_state(root)
+    start_head = _session_start_head(state)
     enforce_session_contract(root, state)
     verification = state.get("verification")
     if not isinstance(verification, dict) or not verification.get("passed"):
@@ -571,7 +594,8 @@ def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
     if verification.get("state_fingerprint") != git_state_fingerprint(root):
         raise HarnessError("Acceptance blocked: Git-visible file contents changed after verification.")
     enforce_session_budget(root, config, state)
-    enforce_scope(root, config, start_head=_session_start_head(state))
+    enforce_protected_session_history(root, start_head)
+    enforce_scope(root, config, start_head=start_head)
     acceptance = {
         "accepted_at": utc_now(),
         "criteria": list(config["acceptance"]["criteria"]),
