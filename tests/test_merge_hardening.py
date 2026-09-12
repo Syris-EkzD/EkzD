@@ -149,7 +149,7 @@ class MergeHardeningTests(unittest.TestCase):
         self.commit_all()
         start_session(self.root, "Keep contract immutable")
 
-        with self.assertRaisesRegex(HarnessError, "configuration changed after the session started"):
+        with self.assertRaisesRegex(HarnessError, "must remain clean"):
             verify_session(self.root)
 
     def test_verifier_cannot_rebase_scope_on_rewritten_session_state(self) -> None:
