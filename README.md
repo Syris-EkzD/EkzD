@@ -4,32 +4,36 @@ EkzD is a small, project-agnostic development harness for scoped and verifiable 
 
 It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working contract for a task, expose that contract to the tools or people doing the work, keep each session bounded, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
 
-EkzD is deliberately not the code generator. In the intended V1 workflow, an AI coding session, Codex, or a human produces the changes; EkzD provides the contract and deterministic acceptance gate around that work. V1 is optimized for a single-operator personal workflow rather than a multi-user policy platform.
+EkzD is deliberately not the code generator. In the intended V1.1 workflow, an AI coding session, Codex, or a human produces the changes; EkzD provides the frozen contract, deterministic implementation handoff, workflow guidance, and acceptance gate around that work. The harness remains optimized for a single-operator personal workflow rather than a multi-user policy platform.
 
-## Recommended V1 workflow
+## Recommended V1.1 workflow
 
-EkzD V1 is designed to work well with separate planning/prompt-generation and code-generation sessions without requiring a daemon, agent router, or model integration.
+V1.1 keeps planning/maintenance and implementation as separate responsibilities without requiring the operator to manually translate EkzD JSON into an implementation prompt.
 
 ```text
-You define the objective
+You + maintainer session define the objective
         ↓
 configure + commit .ekzd/project.toml
         ↓
-ekzd start "..."
+ekzd start "..." --branch feat/example-task
         ↓
-ekzd context --json
+ekzd status
         ↓
-Prompt-generator session
+ekzd prompt
         ↓
-implementation prompt
+Implementation session
         ↓
-Code-generator session
+create/use declared task branch from frozen baseline
         ↓
-GitHub branch / commits
+implement → test → fix → self-review
+        ↓
+push/update branch + open/update PR when supported
         ↓
 GitHub CI
         ↓
-you pull the latest branch locally
+you pull the returned task branch locally
+        ↓
+ekzd status
         ↓
 ekzd verify
         ↓
@@ -43,27 +47,37 @@ merge
 Responsibilities are intentionally separated:
 
 - **You** choose the objective, approve scope changes, review the result, and retain final merge authority.
-- **EkzD** defines the local session contract and deterministically checks the Git-visible result against that contract.
-- **Prompt-generator session** converts the EkzD context and objective into a focused implementation prompt without expanding scope.
-- **Code-generator session** implements the prompt and writes the actual code, usually on a dedicated GitHub branch.
+- **Maintainer/planning session** helps define and review the task but does not need to manually rewrite the frozen contract for the implementation session.
+- **EkzD** freezes the local session contract and portable workflow metadata, renders the deterministic implementation handoff, shows the current workflow state, and checks the Git-visible result against that contract.
+- **Implementation session** consumes the handoff, works on the declared task branch, produces and tests the actual repository changes, and opens or updates a PR when its environment supports those operations.
 - **GitHub** carries branches, commits, pull requests, and collaboration history.
 - **CI** independently executes remote checks where appropriate.
 
-The active session state lives in `.ekzd/session.json`, which is intentionally local and gitignored. EkzD requires that path to remain untracked and also rejects an active session if `.ekzd/session.json` appears in any commit made during that session, even when a later commit removes it from tracking again. A coding session operating only through GitHub therefore cannot legitimately replace or publish that local contract through accepted repository history. V1 bridges the context gap explicitly through `ekzd context --json`, which can be handed to the prompt-generator session as the authoritative task context.
+The active session state lives in `.ekzd/session.json`, which is intentionally local and gitignored. EkzD requires that path to remain untracked and also rejects an active session if `.ekzd/session.json` appears in any commit made during that session, even when a later commit removes it from tracking again. An implementation session operating only through GitHub therefore cannot legitimately replace or publish that local contract through accepted repository history.
 
-This is a manual bridge by design. V1 does not claim to control an AI's GitHub actions in real time. Instead, it validates the resulting Git state after that work is pulled into the environment where EkzD is running.
+`ekzd start` requires an explicit implementation/task branch. The session records the baseline branch and HEAD separately from that declared implementation branch, so starting from `main` does not authorize implementation directly on `main`. A detached baseline is represented as detached, but it still requires a real declared task branch for the portable handoff.
 
-## V1 commands
+At session start EkzD also captures a sanitized repository identifier derived from `remote.origin.url` when one exists. Userinfo, credentials, query parameters, and fragments are excluded. That identifier is frozen in local session metadata, so later changes or removal of `origin` do not silently change the implementation handoff. If no origin exists at session start, EkzD records that fact instead of inventing a remote locator.
+
+`ekzd prompt` is the V1.1 bridge between the local trusted session and a separate implementation environment. It renders the frozen objective, repository baseline, baseline branch, implementation branch, repository identity metadata, sources, scope, authority, acceptance criteria, verification plan, and session budget into an environment-agnostic implementation handoff. It explicitly distinguishes environments with a local Git checkout from environments that only have repository/API access. It also instructs the implementation session to use logical commits, run/fix/retest available checks, self-review, push/update the declared branch and PR when supported, never merge the PR, and report limitations when repository operations are unavailable.
+
+`ekzd context --json` remains available as the lower-level structured contract for tools that need machine-readable data. EkzD still does not authenticate to GitHub, create PRs itself, or control an AI's GitHub actions in real time. Instead, it validates the resulting Git state after that work is returned to the environment where the trusted EkzD session is running.
+
+## Commands
 
 ```sh
 ekzd init
-ekzd start "implement registration validation"
+ekzd start "implement registration validation" --branch feat/registration-validation
+ekzd status
+ekzd prompt
 ekzd context
 ekzd context --json
 ekzd verify
 ekzd handoff --done "implemented validation" --next "review edge cases"
 ekzd finish --accept
 ```
+
+`ekzd status` is the operator-facing workflow compass. For an active session it shows the objective, baseline branch and HEAD, declared implementation branch, current branch, worktree state, commit budget, verification state, and the next expected action. Its verification state is one of the workflow-facing states `not run`, `passed`, `stale`, `failed`, or `blocked` as appropriate. A previously successful verification becomes `stale` if the exact supported Git-visible state changes. An exceeded commit budget or history that no longer descends from the frozen baseline is shown as `blocked` instead of suggesting verification can continue normally.
 
 If an active session cannot or should not be accepted, close it without acceptance:
 
@@ -73,11 +87,11 @@ ekzd abort
 
 `abort` changes only local EkzD session state. It does not revert project files, commits, or Git history, and it never records acceptance.
 
-`ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. Before `ekzd start`, configure and commit `.ekzd/project.toml`; V1 requires that canonical project contract to already exist in `HEAD` with no staged or unstaged changes. Session state remains local and disposable.
+`ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. Before `ekzd start`, configure and commit `.ekzd/project.toml`. V1.1 also requires the working tree to be clean when starting through the CLI so the recorded task baseline can be reproduced by a separate development environment. Session state remains local and disposable.
 
 ## Terminal interface
 
-EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic status colors, concise section headings, and readable success/failure indicators rather than raw JSON for normal human-facing output.
+EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic status colors, concise section headings, readable success/failure indicators, and short next-action guidance rather than raw JSON for normal human-facing output.
 
 - green: successful or clean state;
 - red: failure or blocked operation;
@@ -85,9 +99,9 @@ EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic 
 - cyan: headings, accents, and informational markers;
 - dim text: secondary details.
 
-Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. `ekzd context --json` always remains machine-readable JSON without ANSI styling.
+Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains plain text suitable for direct handoff.
 
-EkzD borrows the visual hierarchy of tools such as Codex, but V1 remains a command-oriented CLI rather than a full-screen interactive TUI.
+EkzD borrows the visual hierarchy of tools such as Codex, but remains a command-oriented CLI rather than a full-screen interactive TUI.
 
 ## Project configuration
 
@@ -130,7 +144,11 @@ timeout_seconds = 600
 
 Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
 
-`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a session unless that file already exists in `HEAD` as a regular tracked file and has no staged or unstaged changes. For an active session, EkzD parses and hashes the raw `HEAD:.ekzd/project.toml` blob rather than the worktree copy, so ordinary checkout transformations such as line-ending conversion cannot redefine the contract. `ekzd context`, `ekzd verify`, and `ekzd finish --accept` all use that committed contract while continuing to require the worktree/index path to remain clean.
+`.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a CLI session unless that file already exists in `HEAD` as a regular tracked file, has no staged or unstaged changes, and the repository working tree is otherwise clean. The clean-start rule gives a separate implementation environment a reproducible commit baseline instead of depending on local-only edits that cannot be represented by the recorded HEAD.
+
+The `--branch` value supplied to `ekzd start` is portable workflow metadata, not a replacement for the canonical project contract. EkzD validates it as a Git branch name, refuses to reuse the non-detached baseline branch as the implementation branch, and stores it in the local active session along with the frozen sanitized repository identity.
+
+For an active session, EkzD parses and hashes the raw `HEAD:.ekzd/project.toml` blob rather than the worktree copy, so ordinary checkout transformations such as line-ending conversion cannot redefine the contract. `ekzd prompt`, `ekzd context`, `ekzd verify`, and `ekzd finish --accept` all remain bound to that committed contract while continuing to require the worktree/index config path to remain clean.
 
 V1 deliberately rejects any tracked path with an active Git `filter` attribute. Clean/smudge filters can make Git's diff representation differ from the actual worktree bytes that verification commands execute, weakening scope and exact-state guarantees. This means Git LFS and repositories that rely on custom tracked-file filters are not supported by EkzD V1. Remove those filter attributes or use a conventional checkout before starting or verifying a session.
 
@@ -155,7 +173,7 @@ EkzD treats verification and acceptance as different stages.
 5. enforces the active session's commit budget;
 6. rejects any active-session commit history that touches `.ekzd/project.toml` or `.ekzd/session.json`, independently of project scope;
 7. checks changed paths against `scope.include` and `scope.exclude` before verification;
-8. runs verification commands without a shell;
+8. runs verification commands directly as configured argv arrays, without a shell;
 9. reloads the committed project configuration from `HEAD`, rejects any verifier-time session-state change, and rechecks the clean frozen configuration, commit budget, protected harness history, supported Git visibility, and path scope against the original pinned session contract;
 10. records the exact supported Git-visible state, final session budget, and committed configuration digest that passed.
 
@@ -173,13 +191,21 @@ EkzD treats verification and acceptance as different stages.
 
 `--accept` is an operator attestation. V1 does not authenticate who typed the command or cryptographically prove that a particular human performed the review.
 
-Acceptance requires the current supported Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
+Acceptance requires the current supported Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed. `ekzd status` mirrors that rule by reporting the previous verification as `stale` rather than `passed` when the current exact state no longer matches.
 
 The exact-state fingerprint covers tracked, staged, unstaged, and untracked state under V1's supported conventional Git checkout model. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. Tracked files using content filters are rejected rather than fingerprinted through a potentially transformed Git view. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
 
-## Context and handoff
+## Context, prompt, status, and handoff
 
-`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the context as structured data for prompt generators and other tools. When a session is active, EkzD refuses to render context if the canonical `.ekzd/project.toml` is dirty, staged, uncommitted, historically touched during the session, or no longer matches the session-start committed digest. The rendered contract itself is parsed from `HEAD:.ekzd/project.toml`, keeping the prompt-generator bridge bound to the same committed contract that verification and acceptance enforce.
+`ekzd prompt` renders the implementation-facing contract for an active V1.1 session. Legacy/API-started sessions that lack the portable V1.1 workflow metadata cannot produce this handoff; start a fresh CLI session with an explicit `--branch`. A legacy session whose recorded baseline was dirty is likewise rejected because another environment could not reproduce that state from the baseline commit alone.
+
+The prompt records the sanitized repository identifier captured at session start when available, project, baseline branch and HEAD, declared implementation branch, clean baseline requirement, objective, declared sources, allowed and excluded scope patterns, constraints, authority, acceptance criteria, configured verification steps, and maximum commit count. Verification commands are rendered as JSON argv arrays plus their working directories so argument boundaries remain lossless rather than being flattened into shell-looking strings.
+
+The generated instructions are environment-agnostic: a development environment with a local checkout should validate its worktree, while an environment with repository/API access should not pretend that local Git checks were performed. The handoff asks capable environments to work from the exact baseline on the declared task branch, run/fix/retest checks, self-review, push/update the task branch, and open/update the PR. It explicitly prohibits merging and requires unsupported PR operations to be reported as limitations.
+
+`ekzd status` renders the workflow-facing state. It is intended to answer the practical question "what am I supposed to do next?" without making the operator reconstruct the procedure from documentation. It distinguishes the frozen baseline branch and HEAD, declared implementation branch, and current checkout. It also reports successful verification as `stale` after exact-state drift, and reports known unrecoverable-in-session conditions such as exceeded commit budget or non-descendant history as `blocked` with restart/abort guidance.
+
+`ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the same committed project contract as structured data for tools that need it. When a session is active, EkzD refuses to render trusted contract outputs if the canonical `.ekzd/project.toml` is dirty, staged, uncommitted, historically touched during the session, or no longer matches the session-start committed digest. The project contract itself is parsed from `HEAD:.ekzd/project.toml`, keeping prompt generation, verification, and acceptance bound to the same committed definition. Portable V1.1 workflow metadata such as the declared task branch and frozen repository identifier remains local in `.ekzd/session.json`.
 
 The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
 
@@ -189,7 +215,7 @@ Likewise, free-text authority and constraint entries are contextual instructions
 
 ## Boundaries
 
-V1 deliberately stays small:
+The current design deliberately stays small:
 
 - single-operator personal workflow rather than multi-user configuration ownership;
 - conventional Git checkout only: no custom tracked-file content filters or Git LFS, no `assume-unchanged`, and no `skip-worktree`/sparse-checkout state;
@@ -197,7 +223,8 @@ V1 deliberately stays small:
 - no database;
 - no model/API integration;
 - no network operations;
-- no autonomous commits, pushes, merges, or deployments;
+- no GitHub authentication inside EkzD;
+- no autonomous PR creation, commits, pushes, merges, or deployments;
 - no real-time interception of an AI's GitHub writes;
 - no operating-system sandbox against a hostile same-user process with arbitrary filesystem, Git, or process control;
 - no claim that free-text authority rules are mechanically understood;
