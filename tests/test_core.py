@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, build_context, init_project, load_config, start_session
+from ekzd.core import HarnessError, build_context, init_project, load_config, render_context, start_session
 
 
 VALID_CONFIG = """schema_version = 1
@@ -74,6 +74,10 @@ class EkzDCoreTests(unittest.TestCase):
         context = build_context(self.root)
         self.assertEqual("Implement one bounded change", context["objective"])
         self.assertEqual("demo", context["project"]["name"])
+
+        rendered = render_context(context)
+        self.assertIn("## Verification", rendered)
+        self.assertIn('"name": "syntax"', rendered)
 
     def test_rejects_source_outside_project(self) -> None:
         config = VALID_CONFIG.replace('paths = [\"README.md\"]', 'paths = [\"../secret.txt\"]')
