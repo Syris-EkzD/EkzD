@@ -47,7 +47,7 @@ Responsibilities are intentionally separated:
 - **GitHub** carries branches, commits, pull requests, and collaboration history.
 - **CI** independently executes remote checks where appropriate.
 
-The active session state lives in `.ekzd/session.json`, which is intentionally local and gitignored. A coding session operating only through GitHub cannot automatically see that local state. V1 bridges that gap explicitly through `ekzd context --json`, which can be handed to the prompt-generator session as the authoritative task context.
+The active session state lives in `.ekzd/session.json`, which is intentionally local and gitignored. EkzD also requires that path to remain untracked by Git and rejects verification if the local session state changes while verifier commands are running. A coding session operating only through GitHub cannot legitimately replace that local contract through repository history. V1 bridges the context gap explicitly through `ekzd context --json`, which can be handed to the prompt-generator session as the authoritative task context.
 
 This is a manual bridge by design. V1 does not claim to control an AI's GitHub actions in real time. Instead, it validates the resulting Git state after that work is pulled into the environment where EkzD is running.
 
@@ -142,16 +142,18 @@ EkzD treats verification and acceptance as different stages.
 
 1. validates the project configuration;
 2. requires it to match the configuration captured when the session started;
-3. enforces the active session's commit budget;
-4. checks changed paths against `scope.include` and `scope.exclude` before verification;
-5. runs verification commands without a shell;
-6. reloads the ready project configuration and active session after the commands finish, then rechecks the frozen configuration, commit budget, and path scope;
-7. records the exact Git-visible state, final session budget, and configuration digest that passed.
+3. requires the active session state to remain local and untracked;
+4. enforces the active session's commit budget;
+5. checks changed paths against `scope.include` and `scope.exclude` before verification;
+6. runs verification commands without a shell;
+7. reloads the ready project configuration, rejects any verifier-time session-state change, and rechecks the frozen configuration, commit budget, and path scope against the original pinned session contract;
+8. records the exact Git-visible state, final session budget, and configuration digest that passed.
 
 `ekzd finish --accept` succeeds only when:
 
 - verification passed;
 - the project configuration still matches the active session and the verified configuration;
+- the local session state remains untracked;
 - the session remains within its original commit budget;
 - the Git HEAD, branch, worktree state, and Git-visible file contents still match the verified state;
 - scope rules still pass; and
@@ -161,7 +163,7 @@ EkzD treats verification and acceptance as different stages.
 
 Acceptance requires the current Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed.
 
-The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them.
+The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and untracked files. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked and must not change while verification commands run.
 
 ## Context and handoff
 
@@ -169,7 +171,7 @@ The exact-state fingerprint covers Git-visible tracked, staged, unstaged, and un
 
 The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
 
-Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: configuration integrity, Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
+Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: configuration integrity, local session-state integrity, Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
 
 `ekzd handoff` records semantic progress (`--done`) and next actions (`--next`) in the local session state. It does not modify project documentation automatically.
 
@@ -183,6 +185,7 @@ V1 deliberately stays small:
 - no network operations;
 - no autonomous commits, pushes, merges, or deployments;
 - no real-time interception of an AI's GitHub writes;
+- no operating-system sandbox against a hostile same-user process with arbitrary filesystem, Git, or process control;
 - no claim that free-text authority rules are mechanically understood;
 - no claim that deterministic checks can prove semantic correctness.
 
