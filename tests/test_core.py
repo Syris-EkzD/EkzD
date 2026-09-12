@@ -76,6 +76,18 @@ class EkzDCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "must remain clean"):
             start_session(self.root, "Do work")
 
+    def test_start_rejects_symlinked_project_config(self) -> None:
+        target = self.root / "local-contract.toml"
+        target.write_text(VALID_CONFIG, encoding="utf-8")
+        config = self.root / ".ekzd/project.toml"
+        config.parent.mkdir()
+        config.symlink_to(Path("../local-contract.toml"))
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "add symlinked EkzD contract"], cwd=self.root, check=True)
+
+        with self.assertRaisesRegex(HarnessError, "regular tracked file"):
+            start_session(self.root, "Do work")
+
     def test_start_and_context_use_valid_config(self) -> None:
         config = self.root / ".ekzd/project.toml"
         config.parent.mkdir()
