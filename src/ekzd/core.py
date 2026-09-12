@@ -91,7 +91,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
     scope = data.get("scope", {})
     if not isinstance(scope, dict):
         raise HarnessError("scope must be a table.")
-    _string_list(scope.get("include", []), "scope.include")
+    _string_list(scope.get("include", []), "scope.include", require_nonempty=ready)
     _string_list(scope.get("exclude", []), "scope.exclude")
     _string_list(scope.get("constraints", []), "scope.constraints")
 
@@ -253,7 +253,7 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
     config = load_config(root, ready=True)
     existing = read_state(root)
     if existing and existing.get("status") == "active":
-        raise HarnessError("An active EkzD session already exists. Finish it before starting another.")
+        raise HarnessError("An active EkzD session already exists. Finish or abort it before starting another.")
 
     state = {
         "schema_version": SCHEMA_VERSION,
@@ -262,6 +262,7 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
         "project": config["project"]["name"],
         "started_at": utc_now(),
         "start_git": git_state(root),
+        "config_digest": config_digest(root),
         "session_policy": {"max_commits": config["session"]["max_commits"]},
         "handoff": {"done": [], "next": []},
         "verification": None,
@@ -335,7 +336,7 @@ def enforce_scope(root: Path, config: dict[str, Any], *, start_head: str | None 
     exclude = scope.get("exclude", [])
     violations: list[str] = []
     for path in paths:
-        if include and not any(_matches_scope(path, pattern) for pattern in include):
+        if not any(_matches_scope(path, pattern) for pattern in include):
             violations.append(f"{path}: outside scope.include")
         if any(_matches_scope(path, pattern) for pattern in exclude):
             violations.append(f"{path}: matches scope.exclude")
@@ -356,6 +357,14 @@ def _session_start_head(state: dict[str, Any]) -> str:
     if not isinstance(start_git, dict) or not isinstance(start_git.get("head"), str) or not start_git["head"]:
         raise HarnessError("Active session is missing its starting Git HEAD.")
     return start_git["head"]
+
+
+def enforce_session_contract(root: Path, state: dict[str, Any]) -> None:
+    recorded_digest = state.get("config_digest")
+    if not isinstance(recorded_digest, str) or not recorded_digest:
+        raise HarnessError("Active session is missing its starting project configuration digest.")
+    if recorded_digest != config_digest(root):
+        raise HarnessError("Project harness configuration changed after the session started; abort this session and start a fresh one.")
 
 
 def session_commit_count(root: Path, start_head: str) -> int:
@@ -384,7 +393,7 @@ def enforce_session_budget(root: Path, config: dict[str, Any], state: dict[str, 
     if commit_count > max_commits:
         raise HarnessError(
             f"Session commit budget exceeded: {commit_count} commits > {max_commits} allowed. "
-            "Reduce the session history or start a fresh session with a larger configured budget."
+            "Abort this session and start a fresh session with an appropriate configured budget."
         )
     return {"commit_count": commit_count, "max_commits": max_commits}
 
@@ -392,6 +401,7 @@ def enforce_session_budget(root: Path, config: dict[str, Any], state: dict[str, 
 def verify_session(root: Path) -> dict[str, Any]:
     config = load_config(root, ready=True)
     state = _active_state(root)
+    enforce_session_contract(root, state)
     budget = enforce_session_budget(root, config, state)
     paths = enforce_scope(root, config, start_head=_session_start_head(state))
     results: list[dict[str, Any]] = []
@@ -452,11 +462,21 @@ def update_handoff(root: Path, *, done: list[str], next_items: list[str]) -> dic
     return handoff
 
 
+def abort_session(root: Path) -> dict[str, Any]:
+    state = _active_state(root)
+    state["status"] = "aborted"
+    state["aborted_at"] = utc_now()
+    state["acceptance"] = None
+    write_state(root, state)
+    return state
+
+
 def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
     if not accept:
         raise HarnessError("Acceptance requires explicit `ekzd finish --accept` approval.")
     config = load_config(root, ready=True)
     state = _active_state(root)
+    enforce_session_contract(root, state)
     verification = state.get("verification")
     if not isinstance(verification, dict) or not verification.get("passed"):
         raise HarnessError("Acceptance blocked: verification has not passed.")
