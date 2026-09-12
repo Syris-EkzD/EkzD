@@ -85,6 +85,8 @@ class TerminalTests(unittest.TestCase):
         cases = [
             (TtyBuffer(), {"TERM": "dumb"}, "posix", os.terminal_size((100, 30))),
             (TtyBuffer(), {"TERM": "xterm"}, "posix", os.terminal_size((30, 8))),
+            (TtyBuffer(), {"TERM": "xterm"}, "posix", os.terminal_size((40, 10))),
+            (TtyBuffer(), {"TERM": "xterm"}, "posix", os.terminal_size((80, 12))),
             (TtyBuffer(), {"TERM": "xterm"}, "nt", os.terminal_size((100, 30))),
             (io.StringIO(), {"TERM": "xterm"}, "posix", os.terminal_size((100, 30))),
         ]
@@ -240,7 +242,7 @@ class TerminalInteractiveTests(unittest.TestCase):
             )
         self.assertEqual(0, code)
         self.assertIn("EkzD: blocked", error_output.getvalue())
-        self.assertNotIn("EkzD: blocked", output.getvalue())
+        self.assertTrue(any("EkzD: blocked" in line for line in terminal._history))
         self.assertTrue(output.getvalue().endswith(ALT_SCREEN_EXIT))
 
     def test_unexpected_interactive_failure_restores_alt_screen(self) -> None:

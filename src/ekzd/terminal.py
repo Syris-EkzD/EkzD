@@ -11,6 +11,8 @@ ALT_SCREEN_EXIT = "\x1b[?1049l"
 CLEAR_SCREEN = "\x1b[2J"
 CURSOR_HOME = "\x1b[H"
 STYLE_RESET = "\x1b[0m"
+MIN_PERSISTENT_COLUMNS = 72
+MIN_PERSISTENT_LINES = 18
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,7 @@ def detect_terminal_capabilities(
 
     is_tty = bool(getattr(stream, "isatty", lambda: False)())
     term = environment.get("TERM", "")
-    suitable_size = size.columns >= 40 and size.lines >= 10
+    suitable_size = size.columns >= MIN_PERSISTENT_COLUMNS and size.lines >= MIN_PERSISTENT_LINES
     screen_control = is_tty and platform_name == "posix" and term not in {"", "dumb"} and suitable_size
     return TerminalCapabilities(
         screen_control=screen_control,

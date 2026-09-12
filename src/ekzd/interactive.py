@@ -243,7 +243,10 @@ def run_interactive(
                             ),
                         )
                 except HarnessError as exc:
-                    _write_line(error_output, failure(f"EkzD: {exc}", enabled=enabled))
+                    rendered_error = failure(f"EkzD: {exc}", enabled=enabled)
+                    _write_line(error_output, rendered_error)
+                    if session.persistent:
+                        session.append(rendered_error + "\n")
         except (_ExitInteractive, KeyboardInterrupt):
             if not session.persistent:
                 _write_line(output)
