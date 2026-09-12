@@ -61,12 +61,29 @@ class EkzDCoreTests(unittest.TestCase):
         with self.assertRaises(HarnessError):
             start_session(self.root, "Do work")
 
+    def test_start_requires_committed_clean_project_config(self) -> None:
+        config = self.root / ".ekzd/project.toml"
+        config.parent.mkdir()
+        config.write_text(VALID_CONFIG, encoding="utf-8")
+
+        with self.assertRaisesRegex(HarnessError, "must be committed"):
+            start_session(self.root, "Do work")
+
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "add EkzD contract"], cwd=self.root, check=True)
+        config.write_text(VALID_CONFIG + "\n# dirty\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(HarnessError, "must remain clean"):
+            start_session(self.root, "Do work")
+
     def test_start_and_context_use_valid_config(self) -> None:
         config = self.root / ".ekzd/project.toml"
         config.parent.mkdir()
         config.write_text(VALID_CONFIG, encoding="utf-8")
         loaded = load_config(self.root)
         self.assertEqual("demo", loaded["project"]["name"])
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "add EkzD contract"], cwd=self.root, check=True)
 
         state = start_session(self.root, "Implement one bounded change")
         self.assertEqual("active", state["status"])
