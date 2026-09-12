@@ -152,6 +152,35 @@ class MergeHardeningTests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "configuration changed after the session started"):
             verify_session(self.root)
 
+    def test_verifier_cannot_rebase_scope_on_rewritten_session_state(self) -> None:
+        command = [
+            "python3",
+            "-c",
+            "from pathlib import Path; import json, subprocess; "
+            "Path('outside.txt').write_text('forbidden\\n', encoding='utf-8'); "
+            "subprocess.run(['git','add','outside.txt'], check=True); "
+            "subprocess.run(['git','commit','-qm','forbidden verifier commit'], check=True); "
+            "p=Path('.ekzd/session.json'); state=json.loads(p.read_text(encoding='utf-8')); "
+            "state['start_git']['head']=subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(); "
+            "p.write_text(json.dumps(state, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
+        ]
+        self.write_config(config_text(include=["README.md"], command=command))
+        self.commit_all()
+        start_session(self.root, "Protect local session contract")
+
+        with self.assertRaisesRegex(HarnessError, "session state changed during verification"):
+            verify_session(self.root)
+
+    def test_tracked_session_state_is_rejected(self) -> None:
+        self.write_config(config_text(include=["README.md"]))
+        self.commit_all()
+        start_session(self.root, "Keep state local")
+        subprocess.run(["git", "add", "-f", ".ekzd/session.json"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "track session state"], cwd=self.root, check=True)
+
+        with self.assertRaisesRegex(HarnessError, "session state must remain local and untracked"):
+            verify_session(self.root)
+
     def test_missing_verification_executable_is_a_failed_step(self) -> None:
         self.write_config(config_text(include=["README.md"], command=["ekzd-command-that-does-not-exist-7f42c1"]))
         self.commit_all()
