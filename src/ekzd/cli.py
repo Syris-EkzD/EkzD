@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .core import (
     HarnessError,
+    abort_session,
     build_context,
     find_root,
     finish_session,
@@ -36,6 +37,8 @@ def parser() -> argparse.ArgumentParser:
     handoff = sub.add_parser("handoff", help="Record semantic handoff notes.")
     handoff.add_argument("--done", action="append", default=[])
     handoff.add_argument("--next", action="append", dest="next_items", default=[])
+
+    sub.add_parser("abort", help="Close the active session without acceptance.")
 
     finish = sub.add_parser("finish", help="Accept and close a verified session.")
     finish.add_argument("--accept", action="store_true", help="Explicitly approve acceptance criteria.")
@@ -68,6 +71,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "handoff":
             handoff = update_handoff(root, done=args.done, next_items=args.next_items)
             print(json.dumps(handoff, indent=2, sort_keys=True))
+            return 0
+        if args.command == "abort":
+            state = abort_session(root)
+            print(f"Aborted: {state['objective']}")
             return 0
         if args.command == "finish":
             state = finish_session(root, accept=args.accept)
