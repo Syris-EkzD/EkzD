@@ -15,7 +15,10 @@ from .core import (
     enforce_protected_session_history,
     enforce_session_contract,
     git_state,
+    git_state_fingerprint,
     load_committed_config,
+    read_state,
+    session_commit_count,
     start_session,
     write_state,
 )
@@ -256,3 +259,118 @@ def build_implementation_prompt(root: Path) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _blocked_status(
+    *,
+    state: dict[str, Any],
+    config: dict[str, Any],
+    current_git: dict[str, Any],
+    start_git: dict[str, Any],
+    start_head: str,
+    reason: str,
+    commit_count: int | None = None,
+) -> dict[str, Any]:
+    workflow = _workflow_metadata(state)
+    return {
+        "session_status": "active",
+        "project": config["project"]["name"],
+        "objective": state["objective"],
+        "current_branch": current_git["branch"],
+        "baseline_branch": start_git.get("branch") or "(detached)",
+        "implementation_branch": workflow["implementation_branch"],
+        "baseline_head": start_head,
+        "head": current_git["head"],
+        "worktree_clean": not current_git["status"],
+        "commit_count": commit_count,
+        "max_commits": config["session"]["max_commits"],
+        "verification": "blocked",
+        "blocked_reason": reason,
+        "next": "Abort this session and restore/restart from a contract-valid baseline before continuing.",
+    }
+
+
+def build_workflow_status(root: Path) -> dict[str, Any]:
+    state = read_state(root)
+    if not state or state.get("status") != "active":
+        status = state.get("status") if state else "none"
+        return {
+            "session_status": status,
+            "objective": state.get("objective") if state else None,
+            "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
+        }
+
+    enforce_session_contract(root, state)
+    start_head = _session_start_head(state)
+    enforce_protected_session_history(root, start_head)
+    config = load_committed_config(root, ready=True)
+    current_git = git_state(root)
+    start_git = state["start_git"]
+    workflow = _workflow_metadata(state)
+
+    try:
+        commit_count = session_commit_count(root, start_head)
+    except HarnessError as exc:
+        return _blocked_status(
+            state=state,
+            config=config,
+            current_git=current_git,
+            start_git=start_git,
+            start_head=start_head,
+            reason=str(exc),
+        )
+
+    max_commits = config["session"]["max_commits"]
+    if commit_count > max_commits:
+        return _blocked_status(
+            state=state,
+            config=config,
+            current_git=current_git,
+            start_git=start_git,
+            start_head=start_head,
+            commit_count=commit_count,
+            reason=f"Session commit budget exceeded: {commit_count} commits > {max_commits} allowed.",
+        )
+
+    changed_since_start = (
+        current_git["head"] != start_head
+        or bool(current_git["status"])
+        or commit_count > 0
+    )
+
+    verification = state.get("verification")
+    verification_status = "not run"
+    if isinstance(verification, dict):
+        if verification.get("passed"):
+            verified_git = verification.get("git") == current_git
+            verified_fingerprint = verification.get("state_fingerprint") == git_state_fingerprint(root)
+            if verified_git and verified_fingerprint:
+                verification_status = "passed"
+                next_action = "Review the verified changes, then run `ekzd finish --accept` if you approve them."
+            else:
+                verification_status = "stale"
+                next_action = "Repository state changed after verification; rerun `ekzd verify` before acceptance."
+        else:
+            verification_status = "failed"
+            next_action = "Fix the verification failure, then rerun `ekzd verify`."
+    elif changed_since_start:
+        next_action = "When the implementation is ready, run `ekzd verify`."
+    else:
+        next_action = "Generate the frozen implementation handoff with `ekzd prompt`."
+
+    return {
+        "session_status": "active",
+        "project": config["project"]["name"],
+        "objective": state["objective"],
+        "current_branch": current_git["branch"],
+        "baseline_branch": start_git.get("branch") or "(detached)",
+        "implementation_branch": workflow["implementation_branch"],
+        "baseline_head": start_head,
+        "head": current_git["head"],
+        "worktree_clean": not current_git["status"],
+        "commit_count": commit_count,
+        "max_commits": max_commits,
+        "verification": verification_status,
+        "blocked_reason": None,
+        "next": next_action,
+    }
