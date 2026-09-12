@@ -4,7 +4,7 @@ This document defines the V1 acceptance contract. It is intentionally stricter t
 
 ## Verification
 
-A verification result is valid only for the exact state that produced it.
+A verification result is valid only for the exact Git-visible state that produced it and only under the harness configuration captured when the session started.
 
 EkzD records:
 
@@ -17,7 +17,13 @@ EkzD records:
 - the active session's commit count and configured maximum;
 - each verification command, working directory, exit code, and bounded output.
 
-Verification fails closed when configuration is invalid, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
+Verification fails closed when configuration is invalid or changed after session start, the session commit budget is exceeded, scope is violated, a working directory escapes the repository, a command times out, or any configured command fails.
+
+## Immutable session contract
+
+When `ekzd start` creates a session, it records the digest of the complete `.ekzd/project.toml` file.
+
+Verification and acceptance require the current configuration to match that starting digest. Scope, authority, session policy, acceptance criteria, verification commands, and other harness settings therefore cannot be loosened or otherwise changed during an active session. Change the configuration only after aborting or finishing the current session, then start a fresh session.
 
 ## Session budget
 
@@ -29,9 +35,11 @@ Verification counts commits reachable from the session's starting `HEAD` to the 
 
 The commit budget is a bounded-work policy, not a claim that commit count directly measures code quality. Its purpose is to keep one objective reviewable and to create a natural handoff point before unrelated work accumulates.
 
+If a session exceeds its budget or otherwise cannot be completed under its original contract, `ekzd abort` closes it without acceptance. Aborting changes only local EkzD session state; it does not revert project files, commits, or Git history.
+
 ## Scope
 
-`scope.include` is an allowlist when non-empty. A changed path must match at least one include pattern.
+`scope.include` is a required allowlist for a ready session. At least one include pattern must be configured before work can start. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
 
 `scope.exclude` is always a denylist. A changed path matching an exclude pattern blocks verification even when it also matches an include pattern.
 
@@ -46,17 +54,20 @@ Acceptance is a separate stage from verification.
 `ekzd finish --accept` must reject the task unless all of the following are true:
 
 1. an active session exists;
-2. configured verification completed successfully;
-3. the active session still satisfies its original commit budget;
-4. the project configuration digest is unchanged;
-5. Git HEAD is unchanged;
-6. the branch is unchanged;
-7. the worktree status is unchanged;
-8. the Git-visible state fingerprint is unchanged;
-9. scope still passes; and
-10. explicit human approval is supplied with `--accept`.
+2. the project harness configuration still matches the digest captured at session start;
+3. configured verification completed successfully;
+4. the active session still satisfies its original commit budget;
+5. the verified project configuration digest is unchanged;
+6. Git HEAD is unchanged;
+7. the branch is unchanged;
+8. the worktree status is unchanged;
+9. the Git-visible state fingerprint is unchanged;
+10. scope still passes; and
+11. explicit human approval is supplied with `--accept`.
 
-If any project file, configuration entry, branch, commit, or worktree state changes after verification, the prior result becomes stale and verification must be rerun.
+If any Git-visible tracked, staged, unstaged, or untracked project state changes after verification, the prior result becomes stale and verification must be rerun.
+
+Git-ignored files are outside V1's exact-state fingerprint. A project that needs an ignored file to affect acceptance must check that requirement through a configured verification command. V1 does not recursively hash every ignored file by default.
 
 ## What this standard does not prove
 
