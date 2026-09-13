@@ -6,8 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, start_session, verify_session
-from ekzd.workflow import build_implementation_prompt, build_workflow_status, start_reproducible_session
+from ekzd.core import HarnessError, abort_session, finish_session, start_session, verify_session
+from ekzd.workflow import (
+    build_contract_review,
+    build_implementation_prompt,
+    build_workflow_status,
+    start_reproducible_session,
+)
 
 
 CONFIG = """schema_version = 1
@@ -89,6 +94,17 @@ class WorkflowUxTests(unittest.TestCase):
         path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
         self._git("add", ".ekzd/project.toml")
         self._git("commit", "-m", "test config")
+
+    def test_contract_review_summarizes_committed_contract_without_starting_session(self) -> None:
+        review = build_contract_review(self.root)
+        self.assertEqual("demo", review["project"])
+        self.assertEqual(1, review["sources_count"])
+        self.assertEqual(1, review["scope_include_count"])
+        self.assertEqual(1, review["scope_exclude_count"])
+        self.assertEqual(1, review["constraint_count"])
+        self.assertEqual(1, review["verification_count"])
+        self.assertEqual(2, review["max_commits"])
+        self.assertFalse((self.root / ".ekzd/session.json").exists())
 
     def test_start_rejects_dirty_nonreproducible_baseline(self) -> None:
         (self.root / "notes.txt").write_text("local only\n", encoding="utf-8")
@@ -285,6 +301,32 @@ class WorkflowUxTests(unittest.TestCase):
         verified = build_workflow_status(self.root)
         self.assertEqual("passed", verified["verification"])
         self.assertIn("ekzd finish --accept", verified["next"])
+
+    def test_finished_status_exposes_existing_previous_session_context(self) -> None:
+        self._start(branch="feat/finished-task")
+        (self.root / "src/app.py").write_text("VALUE = 2\n", encoding="utf-8")
+        self.assertTrue(verify_session(self.root)["passed"])
+        finish_session(self.root, accept=True)
+
+        status = build_workflow_status(self.root)
+
+        self.assertEqual("finished", status["session_status"])
+        self.assertEqual("Change app", status["objective"])
+        self.assertEqual("feat/finished-task", status["previous_implementation_branch"])
+        self.assertEqual("passed", status["previous_verification"])
+        self.assertEqual("accepted", status["previous_result"])
+
+    def test_aborted_status_exposes_existing_previous_session_context(self) -> None:
+        self._start(branch="feat/aborted-task")
+        abort_session(self.root)
+
+        status = build_workflow_status(self.root)
+
+        self.assertEqual("aborted", status["session_status"])
+        self.assertEqual("Change app", status["objective"])
+        self.assertEqual("feat/aborted-task", status["previous_implementation_branch"])
+        self.assertEqual("not run", status["previous_verification"])
+        self.assertEqual("aborted", status["previous_result"])
 
     def test_status_marks_successful_verification_stale_after_change(self) -> None:
         self._start()

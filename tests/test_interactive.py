@@ -49,6 +49,16 @@ def fresh_status() -> dict[str, object]:
 
 
 CONTEXT = {"project": {"name": "Demo"}}
+CONTRACT_REVIEW = {
+    "project": "Demo",
+    "sources_count": 2,
+    "scope_include_count": 3,
+    "scope_exclude_count": 1,
+    "constraint_count": 4,
+    "verification_count": 2,
+    "max_commits": 5,
+}
+
 
 class RecordingPersistentTerminal:
     persistent = True
@@ -66,6 +76,9 @@ class RecordingPersistentTerminal:
 
     def append(self, text: str) -> None:
         self.history.append(text)
+
+    def set_feedback(self, text: str) -> None:
+        self.history = [text]
 
     def redraw(self, header: str, actions: str) -> None:
         self.frames.append((header, actions))
@@ -89,9 +102,9 @@ class InteractiveTests(unittest.TestCase):
         code, output = self._run(active_status(), ["5"])
         self.assertEqual(0, code)
         self.assertIn("guides a scoped development task", output)
-        self.assertIn("project  Demo", output)
-        self.assertIn("session  active", output)
-        self.assertIn("verification  not run", output)
+        self.assertIn("Project  Demo", output)
+        self.assertIn("Session  active", output)
+        self.assertIn("Verification  not run", output)
         self.assertIn("Next", output)
         self.assertIn("Generate implementation prompt", output)
         self.assertIn("Verify changes", output)
@@ -260,7 +273,7 @@ class InteractiveTests(unittest.TestCase):
         verify_session.assert_called_once_with(ROOT)
         self.assertIn("plain contract", output.getvalue())
 
-    def test_start_task_uses_existing_start_operation(self) -> None:
+    def test_start_task_requires_contract_confirmation_before_existing_start_operation(self) -> None:
         output = io.StringIO()
         statuses = iter(
             [
@@ -268,7 +281,7 @@ class InteractiveTests(unittest.TestCase):
                 active_status(),
             ]
         )
-        values = iter(["1", "Implement one thing", "feat/demo", "5"])
+        values = iter(["1", "Implement one thing", "feat/demo", "1", "5"])
         started = {
             "objective": "Implement one thing",
             "workflow": {"implementation_branch": "feat/demo"},
@@ -276,12 +289,67 @@ class InteractiveTests(unittest.TestCase):
         with (
             mock.patch.object(interactive, "build_context", return_value=CONTEXT),
             mock.patch.object(interactive, "build_workflow_status", side_effect=lambda root: next(statuses)),
+            mock.patch.object(interactive, "build_contract_review", return_value=CONTRACT_REVIEW) as build_review,
             mock.patch.object(interactive, "start_reproducible_session", return_value=started) as start_session,
         ):
             code = interactive.run_interactive(ROOT, enabled=False, input_fn=lambda prompt: next(values), output=output)
         self.assertEqual(0, code)
+        build_review.assert_called_once_with(ROOT)
         start_session.assert_called_once_with(ROOT, "Implement one thing", implementation_branch="feat/demo")
+        self.assertIn("Review committed contract", output.getvalue())
+        self.assertIn("Confirm and start", output.getvalue())
 
+    def test_update_contract_first_does_not_create_session(self) -> None:
+        output = io.StringIO()
+        status = {"session_status": "none", "objective": None, "next": "Start a new session."}
+        values = iter(["1", "Implement one thing", "feat/demo", "2", "2"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=status),
+            mock.patch.object(interactive, "build_contract_review", return_value=CONTRACT_REVIEW),
+            mock.patch.object(interactive, "start_reproducible_session") as start_session,
+        ):
+            code = interactive.run_interactive(ROOT, enabled=False, input_fn=lambda prompt: next(values), output=output)
+        self.assertEqual(0, code)
+        start_session.assert_not_called()
+        self.assertIn("Update and commit `.ekzd/project.toml`", output.getvalue())
+
+    def test_cancel_contract_review_does_not_create_session(self) -> None:
+        output = io.StringIO()
+        status = {"session_status": "none", "objective": None, "next": "Start a new session."}
+        values = iter(["1", "Implement one thing", "feat/demo", "3", "2"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=status),
+            mock.patch.object(interactive, "build_contract_review", return_value=CONTRACT_REVIEW),
+            mock.patch.object(interactive, "start_reproducible_session") as start_session,
+        ):
+            code = interactive.run_interactive(ROOT, enabled=False, input_fn=lambda prompt: next(values), output=output)
+        self.assertEqual(0, code)
+        start_session.assert_not_called()
+        self.assertIn("Task start cancelled", output.getvalue())
+
+    def test_persistent_normal_actions_replace_recent_feedback(self) -> None:
+        terminal = RecordingPersistentTerminal()
+        values = iter(["wat", "2", "4"])
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=active_status()),
+            mock.patch.object(interactive, "verify_session", return_value={"passed": True, "steps": []}) as verify_session,
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: next(values),
+                output=io.StringIO(),
+                terminal=terminal,
+            )
+
+        self.assertEqual(0, code)
+        verify_session.assert_called_once_with(ROOT)
+        self.assertEqual(1, len(terminal.history))
+        self.assertIn("Verification passed", terminal.history[0])
+        self.assertNotIn("Invalid selection", terminal.history[0])
 
     def test_persistent_idle_omits_active_intro_and_keeps_idle_actions(self) -> None:
         terminal = RecordingPersistentTerminal()
