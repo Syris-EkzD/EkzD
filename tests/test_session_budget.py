@@ -65,7 +65,7 @@ class SessionBudgetTests(unittest.TestCase):
         subprocess.run(["git", "add", "src/app.py"], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", f"change app {value}"], cwd=self.root, check=True)
 
-    def test_default_budget_blocks_fourth_session_commit(self) -> None:
+    def test_explicit_smaller_budget_blocks_fourth_session_commit(self) -> None:
         start_session(self.root, "Bounded task")
         for value in range(1, 5):
             self.commit_app_change(value)
@@ -73,26 +73,38 @@ class SessionBudgetTests(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "commit budget exceeded"):
             verify_session(self.root)
 
-    def test_explicit_larger_budget_allows_larger_bounded_session(self) -> None:
+    def test_explicit_budgets_from_one_through_twenty_are_valid(self) -> None:
         config = self.root / ".ekzd/project.toml"
-        config.write_text(CONFIG.replace("max_commits = 3", "max_commits = 5"), encoding="utf-8")
+        for value in (1, 2, 5, 20):
+            with self.subTest(value=value):
+                config.write_text(CONFIG.replace("max_commits = 3", f"max_commits = {value}"), encoding="utf-8")
+                self.assertEqual(value, load_config(self.root)["session"]["max_commits"])
+
+    def test_twenty_commit_budget_allows_twentieth_and_blocks_twenty_first(self) -> None:
+        config = self.root / ".ekzd/project.toml"
+        config.write_text(CONFIG.replace("max_commits = 3", "max_commits = 20"), encoding="utf-8")
         subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "configure session budget"], cwd=self.root, check=True)
-        start_session(self.root, "Larger bounded task")
-        for value in range(1, 5):
+        start_session(self.root, "Bounded task")
+        for value in range(1, 21):
             self.commit_app_change(value)
 
         verification = verify_session(self.root)
-
         self.assertTrue(verification["passed"])
-        self.assertEqual({"commit_count": 4, "max_commits": 5}, verification["session_budget"])
+        self.assertEqual({"commit_count": 20, "max_commits": 20}, verification["session_budget"])
 
-    def test_budget_must_be_positive_integer(self) -> None:
+        self.commit_app_change(21)
+        with self.assertRaisesRegex(HarnessError, "commit budget exceeded"):
+            verify_session(self.root)
+
+    def test_invalid_budget_values_are_rejected(self) -> None:
         config = self.root / ".ekzd/project.toml"
-        config.write_text(CONFIG.replace("max_commits = 3", "max_commits = 0"), encoding="utf-8")
-
-        with self.assertRaisesRegex(HarnessError, "positive integer"):
-            load_config(self.root)
+        invalid = ("0", "-1", "true", '"5"', "21")
+        for value in invalid:
+            with self.subTest(value=value):
+                config.write_text(CONFIG.replace("max_commits = 3", f"max_commits = {value}"), encoding="utf-8")
+                with self.assertRaisesRegex(HarnessError, "integer between 1 and 20"):
+                    load_config(self.root)
 
 
 if __name__ == "__main__":

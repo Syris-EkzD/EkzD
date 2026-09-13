@@ -12,7 +12,7 @@ from typing import Any
 CONFIG_RELATIVE = Path(".ekzd/project.toml")
 STATE_RELATIVE = Path(".ekzd/session.json")
 SCHEMA_VERSION = 1
-DEFAULT_MAX_COMMITS = 3
+DEFAULT_MAX_COMMITS = 20
 PROTECTED_SESSION_HISTORY_PATHS = frozenset(
     {
         CONFIG_RELATIVE.as_posix(),
@@ -206,8 +206,15 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
     if not isinstance(session, dict):
         raise HarnessError("session must be a table.")
     max_commits = session.get("max_commits", DEFAULT_MAX_COMMITS)
-    if isinstance(max_commits, bool) or not isinstance(max_commits, int) or max_commits < 1:
-        raise HarnessError("session.max_commits must be a positive integer.")
+    if (
+        isinstance(max_commits, bool)
+        or not isinstance(max_commits, int)
+        or max_commits < 1
+        or max_commits > DEFAULT_MAX_COMMITS
+    ):
+        raise HarnessError(
+            f"session.max_commits must be an integer between 1 and {DEFAULT_MAX_COMMITS}."
+        )
     session["max_commits"] = max_commits
     data["session"] = session
 
@@ -356,7 +363,7 @@ def init_project(root: Path, name: str | None = None) -> Path:
         '[sources]\npaths = []\n\n'
         '[scope]\ninclude = []\nexclude = []\nconstraints = []\n\n'
         '[authority]\nmay = []\nrequires_approval = []\nmay_not = []\n\n'
-        '[session]\nmax_commits = 3\n\n'
+        '[session]\nmax_commits = 20\n\n'
         '[acceptance]\ncriteria = []\n\n'
         '[verification]\nsteps = []\n'
     )
