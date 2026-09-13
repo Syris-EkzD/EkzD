@@ -10,7 +10,10 @@ from ekzd.ui import (
     RESET,
     render_command_summary,
     render_context_ui,
+    render_interactive_home,
     render_status_ui,
+    render_terminal_header,
+    render_terminal_idle_header,
     render_verification_ui,
     success,
     supports_color,
@@ -202,6 +205,111 @@ class UiTests(unittest.TestCase):
         self.assertIn("\x1b[36m", rendered)
         self.assertIn("\x1b[33m", rendered)
         self.assertNotIn(RED, rendered)
+
+    def test_idle_terminal_header_is_distinct_and_omits_active_placeholders(self) -> None:
+        status = {
+            "session_status": "none",
+            "objective": None,
+            "next": "Start a new session.",
+        }
+
+        rendered = render_terminal_idle_header("Demo", status, width=94, enabled=False)
+
+        self.assertNotIn("\x1b[", rendered)
+        self.assertIn("Ready for a new task", rendered)
+        self.assertIn("Scopes development work", rendered)
+        self.assertIn("Project", rendered)
+        self.assertIn("Next", rendered)
+        self.assertNotIn("Branch", rendered)
+        self.assertNotIn("Verification", rendered)
+        self.assertNotIn("Commits", rendered)
+        self.assertNotIn("(unknown)", rendered)
+        self.assertNotIn("not run", rendered)
+        self.assertNotIn("Previous task", rendered)
+
+    def test_idle_terminal_header_shows_finished_previous_task_as_history(self) -> None:
+        objective = "Previous finished objective " * 8
+        status = {
+            "session_status": "finished",
+            "objective": objective,
+            "next": "Start a new session.",
+        }
+
+        rendered = render_terminal_idle_header("Demo", status, width=72, enabled=False)
+
+        self.assertIn("Ready for a new task", rendered)
+        self.assertIn("Previous task", rendered)
+        self.assertIn("finished", rendered)
+        self.assertIn("…", rendered)
+        self.assertNotIn(objective, rendered)
+        self.assertNotIn("Task         ", rendered)
+
+    def test_idle_terminal_header_shows_aborted_previous_task_as_history(self) -> None:
+        status = {
+            "session_status": "aborted",
+            "objective": "Discarded experiment",
+            "next": "Start a new session.",
+        }
+
+        rendered = render_terminal_idle_header("Demo", status, width=94, enabled=False)
+
+        self.assertIn("Previous task", rendered)
+        self.assertIn("aborted", rendered)
+        self.assertIn("Discarded experiment", rendered)
+        self.assertNotIn("Session", rendered)
+
+    def test_idle_fallback_home_is_semantically_idle_without_active_fields(self) -> None:
+        status = {
+            "session_status": "finished",
+            "objective": "Previous task only",
+            "next": "Start a new session.",
+        }
+
+        rendered = render_interactive_home(
+            "Demo",
+            status,
+            ["Start task", "View task", "Exit"],
+            enabled=False,
+        )
+
+        self.assertIn("Ready for a new task", rendered)
+        self.assertIn("Previous task", rendered)
+        self.assertIn("finished", rendered)
+        self.assertIn("Previous task only", rendered)
+        self.assertIn("Start task", rendered)
+        self.assertIn("View task", rendered)
+        self.assertIn("Exit", rendered)
+        self.assertNotIn("session  finished", rendered)
+        self.assertNotIn("verification  ", rendered)
+
+    def test_public_terminal_header_dispatches_idle_state(self) -> None:
+        status = {
+            "session_status": "finished",
+            "objective": "Previous task",
+            "next": "Start a new session.",
+        }
+        rendered = render_terminal_header("Demo", status, width=94, enabled=False)
+        self.assertIn("Ready for a new task", rendered)
+        self.assertIn("Previous task", rendered)
+        self.assertNotIn("Verification", rendered)
+        self.assertNotIn("Commits", rendered)
+
+    def test_active_terminal_header_retains_operational_rows(self) -> None:
+        status = {
+            "session_status": "active",
+            "objective": "Current task",
+            "current_branch": "feat/demo",
+            "verification": "not run",
+            "commit_count": 1,
+            "max_commits": 3,
+            "next": "Verify when ready.",
+        }
+
+        rendered = render_terminal_header("Demo", status, width=94, enabled=False)
+
+        for label in ("Task", "Branch", "Session", "Verification", "Commits", "Next"):
+            self.assertIn(label, rendered)
+        self.assertNotIn("Ready for a new task", rendered)
 
 
 if __name__ == "__main__":

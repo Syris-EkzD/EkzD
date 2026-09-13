@@ -12,6 +12,8 @@ YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
 
 INTERACTIVE_INTRO = "EkzD guides a scoped development task through implementation, verification, and explicit acceptance."
+IDLE_HEADLINE = "Ready for a new task"
+IDLE_PURPOSE = "Scopes development work, verifies the result, and gates explicit acceptance."
 
 
 def supports_color(stream: TextIO) -> bool:
@@ -173,6 +175,49 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _previous_session_lines(
+    status: dict[str, object],
+    *,
+    enabled: bool,
+    width: int | None = None,
+) -> list[str]:
+    outcome = str(status.get("session_status") or "none")
+    objective = status.get("objective")
+    if outcome not in {"finished", "aborted"} or not objective:
+        return []
+
+    outcome_code = GREEN if outcome == "finished" else YELLOW
+    objective_text = str(objective)
+    if width is not None:
+        objective_text = _clip_terminal_value(objective_text, max(1, width - len(outcome) - 5))
+    return [
+        "",
+        _section("Previous task", enabled=enabled),
+        f"  {paint(outcome, outcome_code, enabled=enabled)}  {objective_text}",
+    ]
+
+
+def render_interactive_idle_home(
+    project: str,
+    status: dict[str, object],
+    actions: list[str],
+    *,
+    enabled: bool,
+) -> str:
+    lines = [
+        header("interactive", enabled=enabled),
+        IDLE_HEADLINE,
+        muted(IDLE_PURPOSE, enabled=enabled),
+        "",
+        _meta("project", project, enabled=enabled),
+    ]
+    lines.extend(_next_lines(str(status.get("next") or "Start a new task."), enabled=enabled))
+    lines.extend(_previous_session_lines(status, enabled=enabled))
+    lines.extend(["", _section("Actions", enabled=enabled)])
+    lines.extend(f"  {index}. {label}" for index, label in enumerate(actions, start=1))
+    return "\n".join(lines) + "\n"
+
+
 def render_interactive_home(
     project: str,
     status: dict[str, object],
@@ -180,6 +225,9 @@ def render_interactive_home(
     *,
     enabled: bool,
 ) -> str:
+    if status.get("session_status") != "active":
+        return render_interactive_idle_home(project, status, actions, enabled=enabled)
+
     session_status = str(status.get("session_status") or "none")
     lines = [
         header("interactive", enabled=enabled),
@@ -339,6 +387,45 @@ def _terminal_card_row(
     return f"│ {paint(label_text, BOLD, CYAN, enabled=enabled)} {value_text}{padding} │"
 
 
+def render_terminal_idle_header(
+    project: str,
+    status: dict[str, object],
+    *,
+    width: int,
+    enabled: bool,
+) -> str:
+    card_width = max(4, width - 1)
+    content_width = max(1, card_width - 4)
+    title = "EkzD"
+    title_prefix = f"┌─ {title} "
+    top = (
+        f"┌─ {paint(title, BOLD, CYAN, enabled=enabled)} "
+        + "─" * max(0, card_width - len(title_prefix) - 1)
+        + "┐"
+    )
+    bottom = "└" + "─" * max(0, card_width - 2) + "┘"
+    rows = [
+        ("Project", project, "neutral"),
+        ("State", IDLE_HEADLINE, "neutral"),
+        ("Purpose", IDLE_PURPOSE, "neutral"),
+        ("Next", status.get("next") or "Start a new task.", "neutral"),
+    ]
+    lines = [top]
+    lines.extend(
+        _terminal_card_row(
+            label,
+            value,
+            content_width=content_width,
+            enabled=enabled,
+            kind=kind,
+        )
+        for label, value, kind in rows
+    )
+    lines.append(bottom)
+    lines.extend(_previous_session_lines(status, enabled=enabled, width=card_width))
+    return "\n".join(lines) + "\n"
+
+
 def render_terminal_header(
     project: str,
     status: dict[str, object],
@@ -346,6 +433,9 @@ def render_terminal_header(
     width: int,
     enabled: bool,
 ) -> str:
+    if status.get("session_status") != "active":
+        return render_terminal_idle_header(project, status, width=width, enabled=enabled)
+
     card_width = max(4, width - 1)
     content_width = max(1, card_width - 4)
     title = "EkzD"

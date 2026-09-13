@@ -50,6 +50,29 @@ def fresh_status() -> dict[str, object]:
 
 CONTEXT = {"project": {"name": "Demo"}}
 
+class RecordingPersistentTerminal:
+    persistent = True
+    width = 94
+
+    def __init__(self) -> None:
+        self.history: list[str] = []
+        self.frames: list[tuple[str, str]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def append(self, text: str) -> None:
+        self.history.append(text)
+
+    def redraw(self, header: str, actions: str) -> None:
+        self.frames.append((header, actions))
+
+    def read_key(self) -> str:
+        return "return"
+
 
 class InteractiveTests(unittest.TestCase):
     def _run(self, status: dict[str, object], inputs) -> tuple[int, str]:
@@ -258,6 +281,45 @@ class InteractiveTests(unittest.TestCase):
             code = interactive.run_interactive(ROOT, enabled=False, input_fn=lambda prompt: next(values), output=output)
         self.assertEqual(0, code)
         start_session.assert_called_once_with(ROOT, "Implement one thing", implementation_branch="feat/demo")
+
+
+    def test_persistent_idle_omits_active_intro_and_keeps_idle_actions(self) -> None:
+        terminal = RecordingPersistentTerminal()
+        status = {"session_status": "none", "objective": None, "next": "Start a new session."}
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=status),
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: "2",
+                output=io.StringIO(),
+                terminal=terminal,
+            )
+
+        self.assertEqual(0, code)
+        self.assertNotIn(interactive.INTERACTIVE_INTRO, "\n".join(terminal.history))
+        self.assertIn("Start task", terminal.frames[-1][1])
+        self.assertIn("Exit", terminal.frames[-1][1])
+        self.assertNotIn("View task", terminal.frames[-1][1])
+
+    def test_persistent_active_retains_existing_intro(self) -> None:
+        terminal = RecordingPersistentTerminal()
+        with (
+            mock.patch.object(interactive, "build_context", return_value=CONTEXT),
+            mock.patch.object(interactive, "build_workflow_status", return_value=active_status()),
+        ):
+            code = interactive.run_interactive(
+                ROOT,
+                enabled=False,
+                input_fn=lambda prompt: "4",
+                output=io.StringIO(),
+                terminal=terminal,
+            )
+
+        self.assertEqual(0, code)
+        self.assertIn(interactive.INTERACTIVE_INTRO, "\n".join(terminal.history))
 
     def test_non_active_state_offers_start_task(self) -> None:
         status = {"session_status": "none", "objective": None, "next": "Start a new session."}

@@ -194,12 +194,14 @@ def run_interactive(
     prompt_key_reader = session.read_key if prompt_key_reader is None else prompt_key_reader
 
     with session:
-        if session.persistent:
-            session.append(INTERACTIVE_INTRO)
+        intro_shown = False
         try:
             while True:
                 context = build_context(root)
                 status = build_workflow_status(root)
+                if session.persistent and status.get("session_status") == "active" and not intro_shown:
+                    session.append(INTERACTIVE_INTRO)
+                    intro_shown = True
                 project = str(context["project"]["name"])
                 actions = _interactive_actions(status, persistent=session.persistent)
                 _present(
