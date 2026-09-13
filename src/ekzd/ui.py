@@ -306,51 +306,37 @@ def _clip_terminal_value(value: object, limit: int) -> str:
     return text[: limit - 1] + "…"
 
 
+def _terminal_value_codes(kind: str, value: str) -> tuple[str, ...]:
+    if kind == "session":
+        if value in {"active", "finished"}:
+            return (GREEN,)
+        if value == "aborted":
+            return (YELLOW,)
+    if kind == "verification":
+        if value == "passed":
+            return (GREEN,)
+        if value in {"failed", "blocked"}:
+            return (RED,)
+        if value == "stale":
+            return (YELLOW,)
+    return ()
+
+
 def _terminal_card_row(
     label: str,
     value: object,
     *,
     content_width: int,
     enabled: bool,
+    kind: str = "neutral",
 ) -> str:
     label_width = min(12, max(1, content_width // 3))
     value_width = max(1, content_width - label_width - 1)
     label_text = f"{label:<{label_width}}"
-    value_text = f"{_clip_terminal_value(value, value_width):<{value_width}}"
-    return f"│ {muted(label_text, enabled=enabled)} {value_text} │"
-
-
-def _terminal_summary_row(
-    status: dict[str, object],
-    *,
-    content_width: int,
-    enabled: bool,
-) -> str:
-    session_status = str(status.get("session_status") or "none")
-    verification = str(status.get("verification") or "not run")
-    commit_count = status.get("commit_count")
-    max_commits = status.get("max_commits")
-    commit_label = "?" if commit_count is None else str(commit_count)
-    commit_value = "?" if max_commits is None else f"{commit_label}/{max_commits}"
-    plain = f"session {session_status}   verification {verification}   commits {commit_value}"
-
-    if len(plain) > content_width:
-        clipped = _clip_terminal_value(plain, content_width)
-        return f"│ {clipped:<{content_width}} │"
-
-    if session_status in {"active", "finished"}:
-        session_value = paint(session_status, GREEN, enabled=enabled)
-    elif session_status == "aborted":
-        session_value = paint(session_status, YELLOW, enabled=enabled)
-    else:
-        session_value = muted(session_status, enabled=enabled)
-
-    rendered = (
-        f"{muted('session', enabled=enabled)} {session_value}   "
-        f"{muted('verification', enabled=enabled)} {_verification_value(verification, enabled=enabled)}   "
-        f"{muted('commits', enabled=enabled)} {commit_value}"
-    )
-    return f"│ {rendered}{' ' * (content_width - len(plain))} │"
+    clipped_value = _clip_terminal_value(value, value_width)
+    value_text = paint(clipped_value, *_terminal_value_codes(kind, str(value)), enabled=enabled)
+    padding = " " * (value_width - len(clipped_value))
+    return f"│ {paint(label_text, BOLD, CYAN, enabled=enabled)} {value_text}{padding} │"
 
 
 def render_terminal_header(
@@ -371,20 +357,30 @@ def render_terminal_header(
     )
     bottom = "└" + "─" * max(0, card_width - 2) + "┘"
 
-    lines = [
-        top,
-        _terminal_card_row("project", project, content_width=content_width, enabled=enabled),
+    commit_count = status.get("commit_count")
+    max_commits = status.get("max_commits")
+    commit_label = "?" if commit_count is None else str(commit_count)
+    commit_value = "?" if max_commits is None else f"{commit_label} / {max_commits}"
+    rows = [
+        ("Project", project, "neutral"),
+        ("Task", status.get("objective") or "(none)", "neutral"),
+        ("Branch", status.get("current_branch") or "(unknown)", "neutral"),
+        ("Session", str(status.get("session_status") or "none"), "session"),
+        ("Verification", str(status.get("verification") or "not run"), "verification"),
+        ("Commits", commit_value, "neutral"),
+        ("Next", status.get("next") or "Choose an action below.", "neutral"),
     ]
-    objective = status.get("objective")
-    if objective:
-        lines.append(_terminal_card_row("task", objective, content_width=content_width, enabled=enabled))
-    branch = status.get("current_branch")
-    if branch:
-        lines.append(_terminal_card_row("branch", branch, content_width=content_width, enabled=enabled))
-    lines.append(_terminal_summary_row(status, content_width=content_width, enabled=enabled))
-    next_action = status.get("next")
-    if next_action:
-        lines.append(_terminal_card_row("next", next_action, content_width=content_width, enabled=enabled))
+    lines = [top]
+    lines.extend(
+        _terminal_card_row(
+            label,
+            value,
+            content_width=content_width,
+            enabled=enabled,
+            kind=kind,
+        )
+        for label, value, kind in rows
+    )
     lines.append(bottom)
     return "\n".join(lines) + "\n"
 

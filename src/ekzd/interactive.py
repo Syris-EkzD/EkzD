@@ -6,7 +6,18 @@ from pathlib import Path
 from typing import TextIO
 
 from .core import HarnessError, abort_session, build_context, finish_session, verify_session
-from .terminal import TerminalSession
+from .terminal import (
+    KEY_COPY,
+    KEY_DOWN,
+    KEY_END,
+    KEY_HOME,
+    KEY_PAGE_DOWN,
+    KEY_PAGE_UP,
+    KEY_RETURN,
+    KEY_UP,
+    TerminalSession,
+    copy_text_to_clipboard,
+)
 from .ui import (
     INTERACTIVE_INTRO,
     failure,
@@ -16,7 +27,6 @@ from .ui import (
     render_status_ui,
     render_terminal_actions,
     render_terminal_header,
-    render_terminal_task_details,
     render_verification_ui,
     warning,
 )
@@ -81,6 +91,13 @@ def _actions_for(status: dict[str, object]) -> list[tuple[str, str]]:
     return actions
 
 
+def _interactive_actions(status: dict[str, object], *, persistent: bool) -> list[tuple[str, str]]:
+    actions = _actions_for(status)
+    if not persistent:
+        return actions
+    return [action for action in actions if action[0] != "view"]
+
+
 def _write_line(output: TextIO, message: str = "") -> None:
     output.write(message + "\n")
 
@@ -111,6 +128,55 @@ def _present(
         output.write(render_interactive_home(project, status, labels, enabled=enabled))
 
 
+def _read_prompt_key(key_reader: Callable[[], str]) -> str:
+    try:
+        return key_reader()
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise _ExitInteractive from exc
+
+
+def _show_prompt_view(
+    session: TerminalSession,
+    prompt: str,
+    key_reader: Callable[[], str],
+    copy_fn: Callable[[str], bool] | None = None,
+) -> None:
+    copy_fn = copy_text_to_clipboard if copy_fn is None else copy_fn
+    offset = 0
+    feedback: str | None = None
+    while True:
+        offset, page_size, total = session.redraw_document(
+            "Implementation Prompt",
+            prompt,
+            offset,
+            feedback=feedback,
+        )
+        key = _read_prompt_key(key_reader)
+        max_offset = max(0, total - page_size)
+        if key == KEY_RETURN:
+            return
+        if key == KEY_COPY:
+            if copy_fn(prompt):
+                feedback = "✓ Implementation prompt copied to clipboard"
+            else:
+                feedback = "! Clipboard unavailable. Use `ekzd prompt` for raw output."
+            continue
+
+        feedback = None
+        if key == KEY_UP:
+            offset = max(0, offset - 1)
+        elif key == KEY_DOWN:
+            offset = min(max_offset, offset + 1)
+        elif key == KEY_PAGE_UP:
+            offset = max(0, offset - page_size)
+        elif key == KEY_PAGE_DOWN:
+            offset = min(max_offset, offset + page_size)
+        elif key == KEY_HOME:
+            offset = 0
+        elif key == KEY_END:
+            offset = max_offset
+
+
 def run_interactive(
     root: Path,
     *,
@@ -119,11 +185,13 @@ def run_interactive(
     output: TextIO | None = None,
     error_output: TextIO | None = None,
     terminal: TerminalSession | None = None,
+    prompt_key_reader: Callable[[], str] | None = None,
 ) -> int:
     input_fn = input if input_fn is None else input_fn
     output = sys.stdout if output is None else output
     error_output = sys.stderr if error_output is None else error_output
     session = TerminalSession(output) if terminal is None else terminal
+    prompt_key_reader = session.read_key if prompt_key_reader is None else prompt_key_reader
 
     with session:
         if session.persistent:
@@ -133,7 +201,7 @@ def run_interactive(
                 context = build_context(root)
                 status = build_workflow_status(root)
                 project = str(context["project"]["name"])
-                actions = _actions_for(status)
+                actions = _interactive_actions(status, persistent=session.persistent)
                 _present(
                     session,
                     output,
@@ -192,27 +260,13 @@ def run_interactive(
                     elif action == "prompt":
                         prompt = build_implementation_prompt(root)
                         if session.persistent:
-                            _emit(
-                                session,
-                                output,
-                                render_command_summary(
-                                    "prompt",
-                                    "Implementation prompt ready",
-                                    tone="success",
-                                    details=[("contract", f"{len(prompt.splitlines())} lines")],
-                                    next_action="Use `ekzd prompt` outside the terminal session for copyable plain text.",
-                                    enabled=enabled,
-                                ),
-                            )
+                            _show_prompt_view(session, prompt, prompt_key_reader)
                         else:
                             _emit(session, output, prompt)
                     elif action == "verify":
                         _emit(session, output, render_verification_ui(verify_session(root), enabled=enabled))
                     elif action == "view":
-                        if session.persistent:
-                            _emit(session, output, render_terminal_task_details(status, enabled=enabled))
-                        else:
-                            _emit(session, output, render_status_ui({**status, "project": project}, enabled=enabled))
+                        _emit(session, output, render_status_ui({**status, "project": project}, enabled=enabled))
                     elif action == "accept":
                         if not _confirm(input_fn, "Accept this verified task?"):
                             _emit(session, output, warning("Acceptance cancelled.", enabled=enabled) + "\n")
