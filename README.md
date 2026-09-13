@@ -66,6 +66,7 @@ At session start EkzD also captures a sanitized repository identifier derived fr
 ## Commands
 
 ```sh
+ekzd
 ekzd init
 ekzd start "implement registration validation" --branch feat/registration-validation
 ekzd status
@@ -91,7 +92,15 @@ ekzd abort
 
 ## Terminal interface
 
-EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic status colors, concise section headings, readable success/failure indicators, and short next-action guidance rather than raw JSON for normal human-facing output.
+Running bare `ekzd` in a supported interactive terminal launches EkzD's persistent terminal session. The session uses an alternate screen when the terminal safely supports it, keeps a compact framed workflow header at the top, and redraws that header from the current EkzD state after actions change the session. The header is the persistent task/status view, so persistent mode deliberately avoids a redundant `View task` action. Its state-aware actions focus on generating the implementation handoff, verifying changes, accepting a verified task, aborting, or exiting. The fallback/non-persistent interaction may still expose `View task`, and explicit `ekzd status` remains available unchanged.
+
+The header stays deliberately small. It shows the project and, when available, the session state, current task, current branch, verification state, commit budget, and recommended next action. The terminal session is only a presentation/controller over the existing EkzD operations: it does not duplicate verification, acceptance, scope, Git, or trust logic. Destructive or final actions still require the same explicit confirmation and underlying checks.
+
+Selecting **Generate implementation prompt** opens the complete deterministic implementation contract inside the same persistent EkzD alternate-screen session in an `EkzD · Implementation Prompt` viewer. The viewer supports lightweight keyboard navigation with Up/Down, Page Up/Page Down, Home/End, `c` or `C` to copy the complete exact contract to the system clipboard, and Enter, Escape, or `q` to return. Copying happens only after that explicit action; opening the viewer does not alter the clipboard. If no supported clipboard mechanism succeeds, the viewer reports clipboard unavailability and remains usable. Returning redraws the normal persistent EkzD home screen. The viewer uses the same exact generated contract as the existing prompt operation; it does not maintain a separate formatter. The explicit `ekzd prompt` command remains deterministic raw plain text for piping, automation, or direct handoff.
+
+EkzD degrades conservatively when terminal screen control is unsuitable. Non-TTY bare invocation never waits for input, `TERM=dumb` and very small or unsupported terminals use the plain scrolling interactive presentation, and alternate-screen cleanup restores the previous terminal display on normal exit and failure paths. In supported persistent terminals, EkzD also suppresses alternate-screen mouse-wheel translation so wheel activity does not become menu input, then restores the terminal's prior scroll mode and display state when the session exits.
+
+Human-facing color remains semantic:
 
 - green: successful or clean state;
 - red: failure or blocked operation;
@@ -99,9 +108,7 @@ EkzD uses a compact terminal interface inspired by modern coding CLIs: semantic 
 - cyan: headings, accents, and informational markers;
 - dim text: secondary details.
 
-Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains plain text suitable for direct handoff.
-
-EkzD borrows the visual hierarchy of tools such as Codex, but remains a command-oriented CLI rather than a full-screen interactive TUI.
+Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. Screen-control sequences used by a supported persistent terminal are independent of color styling. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains deterministic plain text suitable for direct handoff.
 
 ## Project configuration
 
