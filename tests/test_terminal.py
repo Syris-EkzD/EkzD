@@ -75,6 +75,9 @@ class RecordingTerminal:
     def append(self, text: str) -> None:
         self.history.append(text)
 
+    def set_feedback(self, text: str) -> None:
+        self.history = [text]
+
     def redraw(self, header: str, actions: str) -> None:
         self.frames.append((header, actions))
 
@@ -124,6 +127,12 @@ class TerminalLifecycleTests(unittest.TestCase):
                 raise RuntimeError('boom')
         self.assertIn(ALT_SCROLL_RESTORE, out.getvalue())
         self.assertTrue(out.getvalue().endswith(ALT_SCREEN_EXIT))
+
+    def test_set_feedback_replaces_history_instead_of_accumulating_transcript(self) -> None:
+        session = TerminalSession(io.StringIO(), capabilities=TerminalCapabilities(True, False, 94, 46))
+        session.append('older summary\nsecond line\n')
+        session.set_feedback('✓ latest result\n')
+        self.assertEqual(['✓ latest result'], session._history)
 
     def test_prompt_document_redraw_never_leaves_alternate_screen(self) -> None:
         out = io.StringIO()
@@ -357,6 +366,14 @@ class TerminalDocumentationTests(unittest.TestCase):
         readme = (Path(__file__).resolve().parents[1] / 'README.md').read_text(encoding='utf-8')
         self.assertIn('`c` or `C` to copy the complete exact contract', readme)
         self.assertIn('explicit `ekzd prompt` command remains deterministic raw plain text', readme)
+
+    def test_readme_documents_contract_review_and_concise_feedback(self) -> None:
+        readme = (Path(__file__).resolve().parents[1] / 'README.md').read_text(encoding='utf-8')
+        self.assertIn('explicit review of the currently committed `.ekzd/project.toml` contract', readme)
+        self.assertIn('confirm and start, update the contract first, or cancel', readme)
+        self.assertIn('bordered secondary **Previous task** card', readme)
+        self.assertIn('recent-feedback area', readme)
+        self.assertIn('explicit `ekzd start` keeps its existing command contract', readme)
 
 
 if __name__ == '__main__':

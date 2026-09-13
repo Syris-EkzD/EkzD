@@ -60,6 +60,37 @@ def _meta(label: str, value: str, *, enabled: bool) -> str:
     return f"{muted(label, enabled=enabled)}  {value}"
 
 
+def _semantic_value_codes(kind: str, value: str) -> tuple[str, ...]:
+    if kind == "success":
+        return (GREEN,)
+    if kind == "warning":
+        return (YELLOW,)
+    if kind == "failure":
+        return (RED,)
+    normalized = value.lower()
+    if kind in {"session", "state", "result"}:
+        if normalized in {"active", "finished", "accepted", "passed", "clean"}:
+            return (GREEN,)
+        if normalized in {"aborted", "stale", "not run", "not accepted"}:
+            return (YELLOW,)
+        if normalized in {"failed", "blocked", "error"}:
+            return (RED,)
+    if kind == "verification":
+        if normalized == "passed":
+            return (GREEN,)
+        if normalized in {"failed", "blocked", "error"}:
+            return (RED,)
+        if normalized in {"stale", "not run"}:
+            return (YELLOW,)
+    return ()
+
+
+def _interactive_field(label: str, value: object, *, enabled: bool, kind: str = "neutral") -> str:
+    text = str(value)
+    rendered = paint(text, *_semantic_value_codes(kind, text), enabled=enabled)
+    return f"{paint(label, BOLD, CYAN, enabled=enabled)}  {rendered}"
+
+
 def _list_items(values: list[str], *, enabled: bool) -> list[str]:
     if not values:
         return [f"  {muted('(none)', enabled=enabled)}"]
@@ -92,7 +123,7 @@ def render_command_summary(
     lines = [header(label, enabled=enabled), _tone_line(headline, tone, enabled=enabled)]
     if details:
         lines.append("")
-        lines.extend(_meta(key, value, enabled=enabled) for key, value in details)
+        lines.extend(_interactive_field(key, value, enabled=enabled) for key, value in details)
     if next_action:
         lines.extend(_next_lines(next_action, enabled=enabled))
     return "\n".join(lines) + "\n"
@@ -118,7 +149,7 @@ def _verification_value(state: str, *, enabled: bool) -> str:
         return paint(state, GREEN, enabled=enabled)
     if state in {"failed", "blocked"}:
         return paint(state, RED, enabled=enabled)
-    if state == "stale":
+    if state in {"stale", "not run"}:
         return paint(state, YELLOW, enabled=enabled)
     return muted(state, enabled=enabled)
 
@@ -127,14 +158,23 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
     lines = [header("status", enabled=enabled)]
     session_status = str(status["session_status"])
     if session_status != "active":
-        lines.append(warning(f"Session: {session_status}", enabled=enabled))
+        if session_status == "finished":
+            lines.append(
+                success(f"Session: {session_status}", enabled=True)
+                if enabled
+                else warning(f"Session: {session_status}", enabled=False)
+            )
+        elif session_status == "aborted":
+            lines.append(warning(f"Session: {session_status}", enabled=enabled))
+        else:
+            lines.append(info(f"Session: {session_status}", enabled=enabled))
         project = status.get("project")
         objective = status.get("objective")
         details: list[str] = []
         if project:
-            details.append(_meta("project", str(project), enabled=enabled))
+            details.append(_interactive_field("project", str(project), enabled=enabled))
         if objective:
-            details.append(_meta("objective", str(objective), enabled=enabled))
+            details.append(_interactive_field("objective", str(objective), enabled=enabled))
         if details:
             lines.extend(["", *details])
         lines.extend(_next_lines(str(status["next"]), enabled=enabled))
@@ -149,13 +189,17 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
     lines.extend(
         [
             "",
-            _meta("project", str(status["project"]), enabled=enabled),
-            _meta("objective", str(status["objective"]), enabled=enabled),
-            _meta("verification", _verification_value(verification, enabled=enabled), enabled=enabled),
+            _interactive_field("project", str(status["project"]), enabled=enabled),
+            _interactive_field("objective", str(status["objective"]), enabled=enabled),
+            _interactive_field(
+                "verification",
+                _verification_value(verification, enabled=enabled),
+                enabled=enabled,
+            ),
             "",
             _section("Branches", enabled=enabled),
             _meta("baseline", str(status["baseline_branch"]), enabled=enabled),
-            _meta("implementation", str(status["implementation_branch"]), enabled=enabled),
+            _interactive_field("implementation", str(status["implementation_branch"]), enabled=enabled),
             _meta("current", str(status["current_branch"]), enabled=enabled),
             "",
             _section("Repository", enabled=enabled),
@@ -175,26 +219,67 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _previous_session_lines(
-    status: dict[str, object],
-    *,
-    enabled: bool,
-    width: int | None = None,
-) -> list[str]:
+def _previous_task_fields(status: dict[str, object]) -> list[tuple[str, object, str]]:
     outcome = str(status.get("session_status") or "none")
     objective = status.get("objective")
     if outcome not in {"finished", "aborted"} or not objective:
         return []
 
-    outcome_code = GREEN if outcome == "finished" else YELLOW
-    objective_text = str(objective)
-    if width is not None:
-        objective_text = _clip_terminal_value(objective_text, max(1, width - len(outcome) - 5))
-    return [
-        "",
-        _section("Previous task", enabled=enabled),
-        f"  {paint(outcome, outcome_code, enabled=enabled)}  {objective_text}",
+    fields: list[tuple[str, object, str]] = [
+        ("State", outcome, "state"),
+        ("Objective", objective, "neutral"),
     ]
+    branch = status.get("previous_implementation_branch")
+    verification = status.get("previous_verification")
+    result = status.get("previous_result")
+    if branch:
+        fields.append(("Implementation branch", branch, "neutral"))
+    if verification:
+        fields.append(("Verification", verification, "verification"))
+    if result:
+        fields.append(("Result", result, "result"))
+    return fields
+
+
+def _previous_session_lines(status: dict[str, object], *, enabled: bool) -> list[str]:
+    fields = _previous_task_fields(status)
+    if not fields:
+        return []
+    lines = ["", _section("Previous task", enabled=enabled)]
+    lines.extend(f"  {_interactive_field(label, value, enabled=enabled, kind=kind)}" for label, value, kind in fields)
+    return lines
+
+
+def render_contract_review(
+    review: dict[str, object],
+    objective: str,
+    implementation_branch: str,
+    *,
+    enabled: bool,
+) -> str:
+    scope_summary = (
+        f"{review['scope_include_count']} included · {review['scope_exclude_count']} excluded · "
+        f"{review['constraint_count']} constraints"
+    )
+    lines = [
+        header("contract review", enabled=enabled),
+        _section("Review committed contract", enabled=enabled),
+        muted("Confirm that the committed EkzD contract matches this proposed task.", enabled=enabled),
+        "",
+        _interactive_field("Objective", objective, enabled=enabled),
+        _interactive_field("Implementation branch", implementation_branch, enabled=enabled),
+        _interactive_field("Project", review["project"], enabled=enabled),
+        _interactive_field("Sources", f"{review['sources_count']} paths", enabled=enabled),
+        _interactive_field("Scope", scope_summary, enabled=enabled),
+        _interactive_field("Verification", f"{review['verification_count']} steps", enabled=enabled),
+        _interactive_field("Max commits", review["max_commits"], enabled=enabled),
+        "",
+        _section("Decision", enabled=enabled),
+        "  1. Confirm and start",
+        "  2. Update contract first",
+        "  3. Cancel",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def render_interactive_idle_home(
@@ -209,7 +294,8 @@ def render_interactive_idle_home(
         IDLE_HEADLINE,
         muted(IDLE_PURPOSE, enabled=enabled),
         "",
-        _meta("project", project, enabled=enabled),
+        _interactive_field("Project", project, enabled=enabled),
+        _interactive_field("State", IDLE_HEADLINE, enabled=enabled),
     ]
     lines.extend(_next_lines(str(status.get("next") or "Start a new task."), enabled=enabled))
     lines.extend(_previous_session_lines(status, enabled=enabled))
@@ -233,15 +319,15 @@ def render_interactive_home(
         header("interactive", enabled=enabled),
         INTERACTIVE_INTRO,
         "",
-        _meta("project", project, enabled=enabled),
-        _meta("session", session_status, enabled=enabled),
+        _interactive_field("Project", project, enabled=enabled),
+        _interactive_field("Session", session_status, enabled=enabled, kind="session"),
     ]
     objective = status.get("objective")
     if objective:
-        lines.append(_meta("task", str(objective), enabled=enabled))
+        lines.append(_interactive_field("Objective", objective, enabled=enabled))
     verification = status.get("verification")
     if verification is not None:
-        lines.append(_meta("verification", _verification_value(str(verification), enabled=enabled), enabled=enabled))
+        lines.append(_interactive_field("Verification", verification, enabled=enabled, kind="verification"))
     lines.extend(_next_lines(str(status.get("next") or "Choose an action below."), enabled=enabled))
     lines.extend(["", _section("Actions", enabled=enabled)])
     lines.extend(f"  {index}. {label}" for index, label in enumerate(actions, start=1))
@@ -355,19 +441,7 @@ def _clip_terminal_value(value: object, limit: int) -> str:
 
 
 def _terminal_value_codes(kind: str, value: str) -> tuple[str, ...]:
-    if kind == "session":
-        if value in {"active", "finished"}:
-            return (GREEN,)
-        if value == "aborted":
-            return (YELLOW,)
-    if kind == "verification":
-        if value == "passed":
-            return (GREEN,)
-        if value in {"failed", "blocked"}:
-            return (RED,)
-        if value == "stale":
-            return (YELLOW,)
-    return ()
+    return _semantic_value_codes(kind, value)
 
 
 def _terminal_card_row(
@@ -377,14 +451,101 @@ def _terminal_card_row(
     content_width: int,
     enabled: bool,
     kind: str = "neutral",
+    label_width: int | None = None,
 ) -> str:
-    label_width = min(12, max(1, content_width // 3))
+    if label_width is None:
+        label_width = min(12, max(1, content_width // 3))
+    else:
+        label_width = min(label_width, max(1, content_width // 2))
     value_width = max(1, content_width - label_width - 1)
     label_text = f"{label:<{label_width}}"
     clipped_value = _clip_terminal_value(value, value_width)
     value_text = paint(clipped_value, *_terminal_value_codes(kind, str(value)), enabled=enabled)
     padding = " " * (value_width - len(clipped_value))
     return f"│ {paint(label_text, BOLD, CYAN, enabled=enabled)} {value_text}{padding} │"
+
+
+def _terminal_card_top(title: str, card_width: int, *, enabled: bool) -> str:
+    title_prefix = f"┌─ {title} "
+    return (
+        f"┌─ {paint(title, BOLD, CYAN, enabled=enabled)} "
+        + "─" * max(0, card_width - len(title_prefix) - 1)
+        + "┐"
+    )
+
+
+def render_previous_task_card(status: dict[str, object], *, width: int, enabled: bool) -> str:
+    fields = _previous_task_fields(status)
+    if not fields:
+        return ""
+    values = {label: (value, kind) for label, value, kind in fields}
+    outcome = str(values["State"][0])
+    result = str(values.get("Result", (outcome, "result"))[0])
+    outcome_kind = "success" if outcome == "finished" else "warning"
+    compact_fields: list[tuple[str, object, str]] = [
+        ("State / Result", f"{outcome} · {result}", outcome_kind),
+        ("Objective", values["Objective"][0], "neutral"),
+    ]
+    if "Implementation branch" in values:
+        compact_fields.append(("Implementation branch", values["Implementation branch"][0], "neutral"))
+    if "Verification" in values:
+        compact_fields.append(("Verification", values["Verification"][0], "verification"))
+
+    card_width = max(4, width - 1)
+    content_width = max(1, card_width - 4)
+    lines = [_terminal_card_top("Previous task", card_width, enabled=enabled)]
+    lines.extend(
+        _terminal_card_row(
+            label,
+            value,
+            content_width=content_width,
+            enabled=enabled,
+            kind=kind,
+            label_width=21,
+        )
+        for label, value, kind in compact_fields
+    )
+    lines.append("└" + "─" * max(0, card_width - 2) + "┘")
+    return "\n".join(lines) + "\n"
+
+
+def render_terminal_contract_review(
+    review: dict[str, object],
+    objective: str,
+    implementation_branch: str,
+    *,
+    width: int,
+    enabled: bool,
+) -> str:
+    card_width = max(4, width - 1)
+    content_width = max(1, card_width - 4)
+    scope_summary = (
+        f"{review['scope_include_count']} included · {review['scope_exclude_count']} excluded · "
+        f"{review['constraint_count']} constraints"
+    )
+    rows = [
+        ("Objective", objective, "neutral"),
+        ("Implementation branch", implementation_branch, "neutral"),
+        ("Project", review["project"], "neutral"),
+        ("Sources", f"{review['sources_count']} paths", "neutral"),
+        ("Scope", scope_summary, "neutral"),
+        ("Verification", f"{review['verification_count']} steps", "neutral"),
+        ("Max commits", review["max_commits"], "neutral"),
+    ]
+    lines = [_terminal_card_top("EkzD · Contract review", card_width, enabled=enabled)]
+    lines.extend(
+        _terminal_card_row(
+            label,
+            value,
+            content_width=content_width,
+            enabled=enabled,
+            kind=kind,
+            label_width=21,
+        )
+        for label, value, kind in rows
+    )
+    lines.append("└" + "─" * max(0, card_width - 2) + "┘")
+    return "\n".join(lines) + "\n"
 
 
 def render_terminal_idle_header(
@@ -396,13 +557,7 @@ def render_terminal_idle_header(
 ) -> str:
     card_width = max(4, width - 1)
     content_width = max(1, card_width - 4)
-    title = "EkzD"
-    title_prefix = f"┌─ {title} "
-    top = (
-        f"┌─ {paint(title, BOLD, CYAN, enabled=enabled)} "
-        + "─" * max(0, card_width - len(title_prefix) - 1)
-        + "┐"
-    )
+    top = _terminal_card_top("EkzD", card_width, enabled=enabled)
     bottom = "└" + "─" * max(0, card_width - 2) + "┘"
     rows = [
         ("Project", project, "neutral"),
@@ -422,7 +577,9 @@ def render_terminal_idle_header(
         for label, value, kind in rows
     )
     lines.append(bottom)
-    lines.extend(_previous_session_lines(status, enabled=enabled, width=card_width))
+    previous = render_previous_task_card(status, width=width, enabled=enabled)
+    if previous:
+        lines.extend(["", *previous.rstrip("\n").splitlines()])
     return "\n".join(lines) + "\n"
 
 
@@ -438,13 +595,7 @@ def render_terminal_header(
 
     card_width = max(4, width - 1)
     content_width = max(1, card_width - 4)
-    title = "EkzD"
-    title_prefix = f"┌─ {title} "
-    top = (
-        f"┌─ {paint(title, BOLD, CYAN, enabled=enabled)} "
-        + "─" * max(0, card_width - len(title_prefix) - 1)
-        + "┐"
-    )
+    top = _terminal_card_top("EkzD", card_width, enabled=enabled)
     bottom = "└" + "─" * max(0, card_width - 2) + "┘"
 
     commit_count = status.get("commit_count")

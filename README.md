@@ -94,7 +94,11 @@ ekzd abort
 
 Running bare `ekzd` in a supported interactive terminal launches EkzD's persistent terminal session. The session uses an alternate screen when the terminal safely supports it and presents active-task and idle states differently. An active task keeps the existing framed operational dashboard with the current task, branch, session, verification, commit budget, and recommended next action. When no task is active, EkzD instead shows a concise landing card that identifies the project, explains that EkzD is ready for a new task, summarizes its purpose, and points to the next action without inventing branch, verification, or commit placeholders.
 
-If the latest session was finished or aborted and its objective is still available, the idle screen shows that objective only as secondary **Previous task** history with the outcome clearly labeled; it is never presented as the current task. With no prior session, that history section is omitted. Persistent idle actions remain focused on starting a task or exiting, while the fallback/non-persistent interaction may still expose `View task`. Explicit `ekzd status` remains unchanged. The terminal session is only a presentation/controller over the existing EkzD operations: it does not duplicate verification, acceptance, scope, Git, or trust logic.
+Selecting **Start task** in the bare interactive experience collects the proposed objective and implementation branch, then pauses before session creation for an explicit review of the currently committed `.ekzd/project.toml` contract. The review summarizes the project, source and scope counts, configured verification steps, and session commit limit. The operator must choose to confirm and start, update the contract first, or cancel. Updating first or canceling creates no session; the update path directs the operator to edit and commit `.ekzd/project.toml` before retrying. EkzD does not try to infer whether the contract semantically matches the objective. This review gate applies only to the interactive Start task flow; explicit `ekzd start` keeps its existing command contract.
+
+If the latest session was finished or aborted, the idle screen may show a bordered secondary **Previous task** card using only the latest persisted session state. It clearly labels the historical outcome and objective and, when available, the implementation branch, verification state, and result/acceptance state. Finished/accepted and passed values use success semantics, aborted/stale/not-run values use warning semantics, and failed/blocked/error values use failure semantics. With no previous session, the card is omitted. Persistent idle actions remain focused on starting a task or exiting, while the fallback/non-persistent interaction may still expose `View task`. Explicit `ekzd status` remains unchanged.
+
+Persistent mode prioritizes the authoritative current dashboard over transcript history. Normal interactive actions replace the small recent-feedback area with a concise success, warning, or failure message instead of stacking full command summaries across redraws; the fallback scrolling interface may continue printing sequential command output. The terminal session remains a presentation/controller over the existing EkzD operations and does not duplicate verification, acceptance, scope, Git, or trust logic.
 
 Selecting **Generate implementation prompt** opens the complete deterministic implementation contract inside the same persistent EkzD alternate-screen session in an `EkzD · Implementation Prompt` viewer. The viewer supports lightweight keyboard navigation with Up/Down, Page Up/Page Down, Home/End, `c` or `C` to copy the complete exact contract to the system clipboard, and Enter, Escape, or `q` to return. Copying happens only after that explicit action; opening the viewer does not alter the clipboard. If no supported clipboard mechanism succeeds, the viewer reports clipboard unavailability and remains usable. Returning redraws the normal persistent EkzD home screen. The viewer uses the same exact generated contract as the existing prompt operation; it does not maintain a separate formatter. The explicit `ekzd prompt` command remains deterministic raw plain text for piping, automation, or direct handoff.
 
@@ -102,11 +106,11 @@ EkzD degrades conservatively when terminal screen control is unsuitable. Non-TTY
 
 Human-facing color remains semantic:
 
-- green: successful or clean state;
-- red: failure or blocked operation;
-- yellow: warning or aborted/non-accepted state;
-- cyan: headings, accents, and informational markers;
-- dim text: secondary details.
+- green: successful, passed, finished, accepted, or clean state;
+- red: failure, blocked, or error state;
+- yellow: warning, aborted, stale, or not-run state;
+- cyan/bold: structural headings and important interactive labels;
+- dim text: genuinely secondary explanatory details and low-priority metadata.
 
 Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. Screen-control sequences used by a supported persistent terminal are independent of color styling. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains deterministic plain text suitable for direct handoff.
 

@@ -204,6 +204,12 @@ class TerminalSession:
         if len(self._history) > self.history_limit:
             del self._history[: len(self._history) - self.history_limit]
 
+    def set_feedback(self, text: str) -> None:
+        lines = text.rstrip("\n").splitlines()
+        if not lines and text:
+            lines = [""]
+        self._history = lines[-self.history_limit :]
+
     def redraw(self, header: str, actions: str) -> None:
         if not self.persistent:
             return

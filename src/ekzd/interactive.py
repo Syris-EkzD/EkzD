@@ -23,14 +23,22 @@ from .ui import (
     failure,
     info,
     render_command_summary,
+    render_contract_review,
     render_interactive_home,
     render_status_ui,
     render_terminal_actions,
+    render_terminal_contract_review,
     render_terminal_header,
     render_verification_ui,
+    success,
     warning,
 )
-from .workflow import build_implementation_prompt, build_workflow_status, start_reproducible_session
+from .workflow import (
+    build_contract_review,
+    build_implementation_prompt,
+    build_workflow_status,
+    start_reproducible_session,
+)
 
 
 class _ExitInteractive(Exception):
@@ -102,11 +110,24 @@ def _write_line(output: TextIO, message: str = "") -> None:
     output.write(message + "\n")
 
 
-def _emit(session: TerminalSession, output: TextIO, text: str) -> None:
+def _set_feedback(session: TerminalSession, output: TextIO, text: str) -> None:
     if session.persistent:
-        session.append(text)
+        session.set_feedback(text)
     else:
         output.write(text)
+
+
+def _emit_action_result(
+    session: TerminalSession,
+    output: TextIO,
+    *,
+    persistent_feedback: str,
+    fallback_output: str,
+) -> None:
+    if session.persistent:
+        session.set_feedback(persistent_feedback)
+    else:
+        output.write(fallback_output)
 
 
 def _present(
@@ -126,6 +147,71 @@ def _present(
         )
     else:
         output.write(render_interactive_home(project, status, labels, enabled=enabled))
+
+
+def _present_contract_review(
+    session: TerminalSession,
+    output: TextIO,
+    review: dict[str, object],
+    objective: str,
+    implementation_branch: str,
+    *,
+    enabled: bool,
+) -> None:
+    decisions = ["Confirm and start", "Update contract first", "Cancel"]
+    if session.persistent:
+        session.redraw(
+            render_terminal_contract_review(
+                review,
+                objective,
+                implementation_branch,
+                width=session.width,
+                enabled=enabled,
+            ),
+            render_terminal_actions(decisions, enabled=enabled),
+        )
+    else:
+        output.write(
+            render_contract_review(
+                review,
+                objective,
+                implementation_branch,
+                enabled=enabled,
+            )
+        )
+
+
+def _review_contract(
+    session: TerminalSession,
+    output: TextIO,
+    input_fn: Callable[[str], str],
+    review: dict[str, object],
+    objective: str,
+    implementation_branch: str,
+    *,
+    enabled: bool,
+) -> str:
+    while True:
+        _present_contract_review(
+            session,
+            output,
+            review,
+            objective,
+            implementation_branch,
+            enabled=enabled,
+        )
+        choice = _read(input_fn, "Contract decision [1-3]: ").strip()
+        if choice == "1":
+            return "confirm"
+        if choice == "2":
+            return "update"
+        if choice == "3":
+            return "cancel"
+        _set_feedback(
+            session,
+            output,
+            warning("Invalid selection. Choose 1, 2, or 3.", enabled=enabled) + "\n",
+        )
 
 
 def _read_prompt_key(key_reader: Callable[[], str]) -> str:
@@ -200,7 +286,7 @@ def run_interactive(
                 context = build_context(root)
                 status = build_workflow_status(root)
                 if session.persistent and status.get("session_status") == "active" and not intro_shown:
-                    session.append(INTERACTIVE_INTRO)
+                    session.set_feedback(INTERACTIVE_INTRO)
                     intro_shown = True
                 project = str(context["project"]["name"])
                 actions = _interactive_actions(status, persistent=session.persistent)
@@ -219,7 +305,7 @@ def run_interactive(
                 except ValueError:
                     index = -1
                 if index < 0 or index >= len(actions):
-                    _emit(
+                    _set_feedback(
                         session,
                         output,
                         warning("Invalid selection. Choose one of the listed actions.", enabled=enabled) + "\n",
@@ -237,17 +323,44 @@ def run_interactive(
                         objective = _read(input_fn, "Task objective: ").strip()
                         branch = _read(input_fn, "Implementation branch: ").strip()
                         if not objective or not branch:
-                            _emit(
+                            _set_feedback(
                                 session,
                                 output,
                                 warning("Task not started: objective and branch are required.", enabled=enabled) + "\n",
                             )
                             continue
-                        state = start_reproducible_session(root, objective, implementation_branch=branch)
-                        _emit(
+                        review = build_contract_review(root)
+                        decision = _review_contract(
                             session,
                             output,
-                            render_command_summary(
+                            input_fn,
+                            review,
+                            objective,
+                            branch,
+                            enabled=enabled,
+                        )
+                        if decision == "update":
+                            _set_feedback(
+                                session,
+                                output,
+                                warning(
+                                    "Task not started. Update and commit `.ekzd/project.toml`, then try again.",
+                                    enabled=enabled,
+                                )
+                                + "\n",
+                            )
+                            continue
+                        if decision == "cancel":
+                            _set_feedback(session, output, info("Task start cancelled.", enabled=enabled) + "\n")
+                            continue
+
+                        state = start_reproducible_session(root, objective, implementation_branch=branch)
+                        intro_shown = True
+                        _emit_action_result(
+                            session,
+                            output,
+                            persistent_feedback=success("Task started", enabled=enabled) + "\n",
+                            fallback_output=render_command_summary(
                                 "session",
                                 "Session started",
                                 tone="success",
@@ -264,20 +377,36 @@ def run_interactive(
                         if session.persistent:
                             _show_prompt_view(session, prompt, prompt_key_reader)
                         else:
-                            _emit(session, output, prompt)
+                            output.write(prompt)
                     elif action == "verify":
-                        _emit(session, output, render_verification_ui(verify_session(root), enabled=enabled))
-                    elif action == "view":
-                        _emit(session, output, render_status_ui({**status, "project": project}, enabled=enabled))
-                    elif action == "accept":
-                        if not _confirm(input_fn, "Accept this verified task?"):
-                            _emit(session, output, warning("Acceptance cancelled.", enabled=enabled) + "\n")
-                            continue
-                        state = finish_session(root, accept=True)
-                        _emit(
+                        verification = verify_session(root)
+                        _emit_action_result(
                             session,
                             output,
-                            render_command_summary(
+                            persistent_feedback=(
+                                success("Verification passed", enabled=enabled)
+                                if verification.get("passed")
+                                else failure("Verification failed", enabled=enabled)
+                            )
+                            + "\n",
+                            fallback_output=render_verification_ui(verification, enabled=enabled),
+                        )
+                    elif action == "view":
+                        output.write(render_status_ui({**status, "project": project}, enabled=enabled))
+                    elif action == "accept":
+                        if not _confirm(input_fn, "Accept this verified task?"):
+                            _set_feedback(
+                                session,
+                                output,
+                                warning("Acceptance cancelled.", enabled=enabled) + "\n",
+                            )
+                            continue
+                        state = finish_session(root, accept=True)
+                        _emit_action_result(
+                            session,
+                            output,
+                            persistent_feedback=success("Task accepted", enabled=enabled) + "\n",
+                            fallback_output=render_command_summary(
                                 "session",
                                 "Session accepted",
                                 tone="success",
@@ -287,13 +416,18 @@ def run_interactive(
                         )
                     elif action == "abort":
                         if not _confirm(input_fn, "Abort this task without acceptance?"):
-                            _emit(session, output, warning("Abort cancelled.", enabled=enabled) + "\n")
+                            _set_feedback(
+                                session,
+                                output,
+                                warning("Abort cancelled.", enabled=enabled) + "\n",
+                            )
                             continue
                         state = abort_session(root)
-                        _emit(
+                        _emit_action_result(
                             session,
                             output,
-                            render_command_summary(
+                            persistent_feedback=warning("Task aborted", enabled=enabled) + "\n",
+                            fallback_output=render_command_summary(
                                 "session",
                                 "Session aborted without acceptance",
                                 tone="warning",
@@ -306,7 +440,7 @@ def run_interactive(
                     rendered_error = failure(f"EkzD: {exc}", enabled=enabled)
                     _write_line(error_output, rendered_error)
                     if session.persistent:
-                        session.append(rendered_error + "\n")
+                        session.set_feedback(rendered_error + "\n")
         except (_ExitInteractive, KeyboardInterrupt):
             if not session.persistent:
                 _write_line(output)
