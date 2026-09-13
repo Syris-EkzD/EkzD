@@ -149,6 +149,10 @@ class WorkflowUxTests(unittest.TestCase):
         self.assertIn("If you have a local Git checkout", prompt)
         self.assertIn("do not pretend local Git state was checked", prompt)
         self.assertIn("Authoritative EkzD verification happens in the maintainer environment", prompt)
+        self.assertIn("hard safety ceiling, not a target", prompt)
+        self.assertIn("Prefer small, logically isolated commits", prompt)
+        self.assertIn("Do not combine unrelated changes merely to reduce the number of commits", prompt)
+        self.assertIn("stop and reassess or report that the task may be exceeding its intended scope", prompt)
 
     def test_prompt_sanitizes_https_credentials_at_session_start(self) -> None:
         self._git(

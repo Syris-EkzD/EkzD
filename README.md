@@ -138,7 +138,7 @@ requires_approval = ["Merge to main."]
 may_not = ["Change secrets or deployment credentials."]
 
 [session]
-max_commits = 3
+max_commits = 20
 
 [acceptance]
 criteria = [
@@ -167,9 +167,9 @@ Changing scope, authority, sources, session policy, acceptance criteria, verific
 
 The two V1 protected harness-history paths are exactly `.ekzd/project.toml` and `.ekzd/session.json`. Their protection is independent of `scope.include` and `scope.exclude`; even `include = ["*"]` cannot authorize committing either path during an active session. This is intentionally narrower than protecting the entire `.ekzd/` directory so future non-trust-critical EkzD artifacts can evolve without inheriting an unnecessary blanket restriction.
 
-`session.max_commits` is a hard session-size budget. `ekzd init` writes `3`, and V1 also treats a missing value as `3` for backward compatibility. Projects may choose another positive integer when a genuinely larger bounded task needs it. The configured value is captured when the session starts; it cannot be raised mid-session to excuse work that has already exceeded its original boundary.
+`session.max_commits` is a hard session-size safety ceiling. `ekzd init` writes `20`, and a missing value also resolves to `20`. Projects may configure a smaller positive integer, but values above `20` are rejected rather than clamped. The configured value is captured when the session starts; it cannot be raised mid-session to excuse work that has already exceeded its original boundary.
 
-The intent is not to claim that a fourth commit automatically lowers code quality. The budget creates a practical stopping point before one objective grows into several loosely related tasks. Configure the budget to fit the project, but keep one EkzD session focused on one objective.
+The ceiling is not a target. Implementation work should prefer small, logically isolated commits when multiple commits improve reviewability, without creating meaningless micro-commits. Unrelated changes should not be combined merely to reduce commit count. If a task approaches its configured ceiling, stop and reassess or report that the task may be exceeding its intended scope rather than creating oversized commits to stay under the limit.
 
 ## Acceptance model
 

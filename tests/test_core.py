@@ -54,7 +54,17 @@ class EkzDCoreTests(unittest.TestCase):
     def test_init_creates_template_and_ignores_session(self) -> None:
         init_project(self.root, "Demo")
         self.assertTrue((self.root / ".ekzd/project.toml").is_file())
+        self.assertIn("max_commits = 20", (self.root / ".ekzd/project.toml").read_text(encoding="utf-8"))
         self.assertIn(".ekzd/session.json", (self.root / ".gitignore").read_text(encoding="utf-8"))
+
+    def test_missing_session_budget_defaults_to_twenty(self) -> None:
+        config = self.root / ".ekzd/project.toml"
+        config.parent.mkdir()
+        config.write_text(VALID_CONFIG, encoding="utf-8")
+
+        loaded = load_config(self.root)
+
+        self.assertEqual(20, loaded["session"]["max_commits"])
 
     def test_start_requires_ready_acceptance_and_verification(self) -> None:
         init_project(self.root)
