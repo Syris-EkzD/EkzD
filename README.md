@@ -80,6 +80,56 @@ ekzd finish --accept
 
 `ekzd status` is the operator-facing workflow compass. For an active session it shows the objective, baseline branch and HEAD, declared implementation branch, current branch, worktree state, commit budget, verification state, and the next expected action. Its verification state is one of the workflow-facing states `not run`, `passed`, `stale`, `failed`, or `blocked` as appropriate. A previously successful verification becomes `stale` if the exact supported Git-visible state changes. An exceeded commit budget or history that no longer descends from the frozen baseline is shown as `blocked` instead of suggesting verification can continue normally.
 
+
+## Stateless worker checking
+
+`ekzd check` is a separate worker-side path for implementation environments that should validate a frozen task without owning EkzD's local session lifecycle. Unlike `start`, `verify`, and `finish`, worker checking does not require, read, or update `.ekzd/session.json`. The existing session workflow remains the maintainer/operator acceptance path.
+
+Worker authority comes from a standalone schema-version-1 TOML task manifest. The file may live outside the repository, and every result identifies the exact manifest bytes with a SHA-256 digest. Repository-level verification is still trusted from `.ekzd/project.toml` at the manifest's frozen baseline commit; optional task verification steps are additive and cannot replace those project checks.
+
+A minimal task manifest looks like this:
+
+```toml
+schema_version = 1
+objective = "Implement registration validation"
+baseline = "0123456789abcdef0123456789abcdef01234567"
+implementation_branch = "feat/registration-validation"
+max_commits = 4
+# Optional: sanitized repository identity expected from remote.origin.url.
+repository = "https://github.com/example/project"
+
+[scope]
+include = ["src/", "tests/"]
+exclude = ["src/generated/"]
+
+[acceptance]
+criteria = ["Validation behavior is covered by tests."]
+
+# Optional additive checks.
+[[verification.steps]]
+name = "focused-tests"
+command = ["python3", "-m", "unittest", "tests.test_validation"]
+cwd = "."
+timeout_seconds = 120
+```
+
+During implementation, run a development check against the current HEAD plus staged, unstaged, and untracked non-ignored work:
+
+```sh
+ekzd check --task /path/to/task.toml
+ekzd check --task /path/to/task.toml --json
+```
+
+Before handoff, run final checking:
+
+```sh
+ekzd check --final --task /path/to/task.toml
+```
+
+Final checking requires a clean worktree and binds a successful result to the exact final HEAD. Both modes verify baseline ancestry, the declared implementation branch, the commit ceiling, protected EkzD paths and supported Git visibility, task scope, optional repository identity, and all baseline project plus additive task verification commands. Verification commands are executed directly as argv arrays, never through a shell. EkzD does not repair, format, stage, commit, reset, restore, or otherwise rewrite the candidate; if a configured verifier changes Git-visible project state, the check fails and leaves that mutation visible for inspection.
+
+Each individual result uses one of four states: `PASS` means the check ran and succeeded; `FAIL` means it ran and found a blocking violation; `UNAVAILABLE` means a required check could not be evaluated or executed and is blocking; `WARN` is a non-blocking observation. Overall readiness succeeds only when no required result is `FAIL` or `UNAVAILABLE`. Ordinary independent failures are aggregated where safe so one failed command does not hide unrelated results.
+
 If an active session cannot or should not be accepted, close it without acceptance:
 
 ```sh
