@@ -6,6 +6,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .check import check_result, empty_worker_result, finalize_worker_result
 from .core import (
@@ -119,6 +120,36 @@ def _tracked_snapshot(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _safe_repository_identifier(value: str) -> str:
+    raw = value.strip()
+    try:
+        parsed = urlsplit(raw)
+        if "://" in raw:
+            if not parsed.scheme or not parsed.hostname:
+                raise ValueError
+            parsed.port
+        elif "@" in raw:
+            if raw.count("@") != 1:
+                raise ValueError
+            user_host, separator, path = raw.partition(":")
+            user, at, host = user_host.partition("@")
+            if not separator or not at or not user or not host or not path or "@" in path:
+                raise ValueError
+        sanitized = _sanitize_repository_identifier(raw)
+        sanitized_parsed = urlsplit(sanitized)
+        if (
+            not sanitized
+            or "@" in sanitized
+            or sanitized_parsed.username is not None
+            or sanitized_parsed.password is not None
+            or ("://" in sanitized and (not sanitized_parsed.scheme or not sanitized_parsed.hostname))
+        ):
+            raise ValueError
+        return sanitized
+    except (ValueError, TypeError) as exc:
+        raise HarnessError("Repository identity cannot be normalized safely.") from exc
+
+
 def _run_step(root: Path, prefix: str, step: dict[str, Any] | TaskVerificationStep) -> tuple[dict[str, Any], bool]:
     if isinstance(step, TaskVerificationStep):
         name = step.name
@@ -131,9 +162,13 @@ def _run_step(root: Path, prefix: str, step: dict[str, Any] | TaskVerificationSt
         cwd = str(step.get("cwd", "."))
         timeout = int(step.get("timeout_seconds", 600))
     check_name = f"{prefix}:{name}"
-    command_cwd = root / cwd
-    if not command_cwd.is_dir():
-        return check_result(check_name, "UNAVAILABLE", f"Configured working directory does not exist: {cwd}"), False
+    try:
+        resolved_root = root.resolve()
+        command_cwd = (root / cwd).resolve()
+    except OSError:
+        return check_result(check_name, "UNAVAILABLE", f"Configured working directory is unusable: {cwd}"), False
+    if resolved_root not in (command_cwd, *command_cwd.parents) or not command_cwd.is_dir():
+        return check_result(check_name, "UNAVAILABLE", f"Configured working directory must resolve inside the project: {cwd}"), False
 
     try:
         before_tracked = _tracked_snapshot(root)
@@ -301,8 +336,8 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
             if origin is None:
                 _add(result, "repository-identity", "UNAVAILABLE", "Task declares a repository identity but this checkout has no origin remote.")
             else:
-                actual = _sanitize_repository_identifier(origin)
-                expected = _sanitize_repository_identifier(task.repository)
+                actual = _safe_repository_identifier(origin)
+                expected = _safe_repository_identifier(task.repository)
                 if actual == expected:
                     _add(result, "repository-identity", "PASS", "Sanitized repository identity matches the task manifest.", repository=actual)
                 else:

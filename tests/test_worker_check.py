@@ -40,7 +40,12 @@ class WorkerCheckTests(unittest.TestCase):
     def _toml_array(self, values: list[str]) -> str:
         return "[" + ", ".join(json.dumps(value) for value in values) + "]"
 
-    def _write_project_steps(self, steps: list[tuple[str, list[str]]]) -> None:
+    def _write_project_steps(
+        self,
+        steps: list[tuple[str, list[str]]],
+        *,
+        step_cwds: dict[str, str] | None = None,
+    ) -> None:
         lines = [
             "schema_version = 1",
             "",
@@ -74,7 +79,7 @@ class WorkerCheckTests(unittest.TestCase):
                 "[[verification.steps]]",
                 f"name = {json.dumps(name)}",
                 f"command = {self._toml_array(command)}",
-                'cwd = "."',
+                f"cwd = {json.dumps((step_cwds or {}).get(name, '.'))}",
                 "timeout_seconds = 30",
             ]
         (self.root / ".ekzd/project.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -89,6 +94,7 @@ class WorkerCheckTests(unittest.TestCase):
         max_commits: int = 20,
         repository: str | None = None,
         task_steps: list[tuple[str, list[str]]] | None = None,
+        task_step_cwds: dict[str, str] | None = None,
     ) -> None:
         lines = [
             "schema_version = 1",
@@ -114,7 +120,7 @@ class WorkerCheckTests(unittest.TestCase):
                 "[[verification.steps]]",
                 f"name = {json.dumps(name)}",
                 f"command = {self._toml_array(command)}",
-                'cwd = "."',
+                f"cwd = {json.dumps((task_step_cwds or {}).get(name, '.'))}",
                 "timeout_seconds = 30",
             ]
         self.task_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -229,6 +235,58 @@ class WorkerCheckTests(unittest.TestCase):
         self.assertEqual("FAIL", checks["task:fails"]["status"])
         self.assertEqual("PASS", checks["task:later"]["status"])
 
+    def test_verification_cwd_inside_repository_still_runs(self) -> None:
+        work = self.root / "work"
+        work.mkdir()
+        self._write_task(
+            include=["allowed.txt", "work"],
+            task_steps=[("inside", ["python3", "-c", "from pathlib import Path; print(Path.cwd().name)"])],
+            task_step_cwds={"inside": "work"},
+        )
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["task:inside"]
+
+        self.assertEqual("PASS", check["status"])
+        self.assertEqual("work\n", check["details"]["stdout"])
+
+    def test_task_verification_cwd_symlink_escape_is_blocked_without_execution(self) -> None:
+        external = self.base / "external-task"
+        external.mkdir()
+        (self.root / "escaped-task").symlink_to(external, target_is_directory=True)
+        self._write_task(
+            include=["allowed.txt", "escaped-task"],
+            task_steps=[("escaped", ["python3", "-c", "open('executed.txt','w').write('ran')"])],
+            task_step_cwds={"escaped": "escaped-task"},
+        )
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["task:escaped"]
+
+        self.assertEqual("UNAVAILABLE", check["status"])
+        self.assertFalse((external / "executed.txt").exists())
+        self.assertNotIn(str(external), json.dumps(result))
+
+    def test_project_verification_cwd_symlink_escape_is_blocked_without_execution(self) -> None:
+        external = self.base / "external-project"
+        external.mkdir()
+        (self.root / "escaped-project").symlink_to(external, target_is_directory=True)
+        self._write_project_steps(
+            [("escaped", ["python3", "-c", "open('executed.txt','w').write('ran')"])],
+            step_cwds={"escaped": "escaped-project"},
+        )
+        self._git("add", ".")
+        self._git("commit", "-q", "-m", "project cwd fixture")
+        self.baseline = self._git("rev-parse", "HEAD")
+        self._write_task(baseline=self.baseline)
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["project:escaped"]
+
+        self.assertEqual("UNAVAILABLE", check["status"])
+        self.assertFalse((external / "executed.txt").exists())
+        self.assertNotIn(str(external), json.dumps(result))
+
     def test_verifier_mutation_is_detected_not_restored_and_stops_dependent_steps(self) -> None:
         self._write_task(task_steps=[
             ("mutate", ["python3", "-c", "open('allowed.txt','w').write('mutated\\n')"]),
@@ -249,6 +307,53 @@ class WorkerCheckTests(unittest.TestCase):
         serialized = json.dumps(result)
         self.assertNotIn("supersecret", serialized)
         self.assertNotIn("hunter2", serialized)
+
+    def test_repository_identity_valid_credentialed_url_still_matches(self) -> None:
+        self._git("remote", "add", "origin", "https://user:supersecret@github.com/example/demo.git?token=hunter2#frag")
+        self._write_task(repository="https://github.com/example/demo")
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["repository-identity"]
+
+        self.assertEqual("PASS", check["status"])
+        serialized = json.dumps(result)
+        self.assertNotIn("supersecret", serialized)
+        self.assertNotIn("hunter2", serialized)
+
+    def test_unsafe_declared_repository_identity_is_unavailable_without_secret_leak(self) -> None:
+        self._git("remote", "add", "origin", "https://github.com/example/demo.git")
+        self._write_task(
+            repository="https:////secretuser:secretpass@github.com/example/demo.git?token=declaredtoken"
+        )
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["repository-identity"]
+
+        self.assertEqual("UNAVAILABLE", check["status"])
+        serialized = json.dumps(result)
+        for secret in ("secretuser", "secretpass", "declaredtoken"):
+            self.assertNotIn(secret, serialized)
+        self.assertNotIn("expected", check.get("details", {}))
+        self.assertNotIn("actual", check.get("details", {}))
+
+    def test_unsafe_origin_repository_identity_is_unavailable_without_secret_leak(self) -> None:
+        self._git(
+            "remote",
+            "add",
+            "origin",
+            "https:////originuser:originpass@github.com/example/demo.git?token=origintoken",
+        )
+        self._write_task(repository="https://github.com/example/demo")
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["repository-identity"]
+
+        self.assertEqual("UNAVAILABLE", check["status"])
+        serialized = json.dumps(result)
+        for secret in ("originuser", "originpass", "origintoken"):
+            self.assertNotIn(secret, serialized)
+        self.assertNotIn("expected", check.get("details", {}))
+        self.assertNotIn("actual", check.get("details", {}))
 
 
 if __name__ == "__main__":
