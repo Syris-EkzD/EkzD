@@ -43,6 +43,18 @@ At session start EkzD reads `remote.origin.url` when available, sanitizes it, an
 
 This workflow metadata remains in `.ekzd/session.json`; it is not added to `.ekzd/project.toml` and does not make GitHub part of the trust boundary. EkzD still performs no GitHub authentication or network orchestration.
 
+## Runtime build identity and worker task schemas
+
+EkzD 0.2.0 has an exact runtime build identity for stateless worker checking. The semantic version is defined once in `ekzd.__version__`, and package metadata derives its version from that source. `ekzd --version` reports that semantic version plus the exact 64-character lowercase SHA-256 for the Python source files of the executing `ekzd` package and does not require an EkzD project checkout.
+
+The runtime build SHA-256 is independent of Git history, Git metadata, the absolute installation directory, bytecode, cache files, wheel `RECORD`, `dist-info`, and other installer-specific metadata. EkzD recursively enumerates the executing package's `.py` files, orders them by POSIX package-relative path, normalizes CRLF and lone CR source line endings to LF, and binds both each relative path and the corresponding normalized bytes into the digest with length-delimited separators. A symlinked or unreadable Python source path, an unusable source path, or failure to determine the package source set reliably makes exact build identity unavailable. In that condition `ekzd --version` exits non-zero rather than substituting `unknown` or another placeholder.
+
+Standalone worker task manifests support schema versions 1 and 2. Schema v1 remains compatible with its existing baseline, repository, authority, scope, commit-ceiling, and verification semantics. Because schema v1 has no harness-build pin, worker checking adds a non-blocking `WARN` explaining that the task does not pin the EkzD harness build; otherwise its worker behavior remains unchanged.
+
+Schema v2 adds a required `[ekzd]` table with a non-empty `version` and an exact 64-character hexadecimal `build_sha256`. Before evaluating Git visibility, baseline ancestry, branch, scope, repository identity, commit ceilings, project verification, or task verification, worker checking determines the executing EkzD identity and compares both required fields. A version or build mismatch is a blocking failure and returns before any project or task verification command executes. If exact executing build identity cannot be determined, checking is blocking `UNAVAILABLE` and cannot report readiness.
+
+Every worker result carries the executing EkzD semantic version and build SHA-256 in structured output when the identity is available, and human-readable `ekzd check` output shows the same values. This harness-build identity gate is additive to the existing worker trust model; it does not change `.ekzd/project.toml` schema or weaken baseline ancestry, implementation-branch, worktree-mode, repository-identity, scope, commit-ceiling, protected-history, Git-visibility, verifier-mutation, aggregation, or final clean-worktree checks.
+
 ## Protected harness history
 
 V1 protects exactly two trust-critical paths from active-session commit history:
@@ -166,4 +178,4 @@ Project configuration must use repository-relative paths and command arrays. Ekz
 
 V1 assumes a conventional checkout: no active tracked-file content filters or Git LFS, no `assume-unchanged`, and no `skip-worktree`/sparse-checkout state. Future versions may add stronger support for transformed or virtualized working trees, but V1 fails closed instead of guessing how such features affect scope or exact-state evidence.
 
-Future schema versions may add stronger evidence or policy gates, but V1 should remain backward-compatible within `schema_version = 1` or require an explicit schema increment.
+Future schema versions may add stronger evidence or policy gates, but V1 should remain backward-compatible within `.ekzd/project.toml` `schema_version = 1`. Stateless worker task manifests separately support task schema versions 1 and 2; adding task schema v2 does not change the project-contract schema.

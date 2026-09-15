@@ -67,6 +67,7 @@ At session start EkzD also captures a sanitized repository identifier derived fr
 
 ```sh
 ekzd
+ekzd --version
 ekzd init
 ekzd start "implement registration validation" --branch feat/registration-validation
 ekzd status
@@ -81,15 +82,17 @@ ekzd finish --accept
 
 Running bare `ekzd` is deterministic and non-interactive: it prints the ordinary command-line help and exits successfully. Task lifecycle actions are explicit subcommands; EkzD does not open a menu or TUI.
 
+`ekzd --version` reports the semantic package version together with the exact 64-character lowercase SHA-256 of the Python source files in the executing `ekzd` package. The build fingerprint is based only on sorted package-relative `.py` paths plus normalized source bytes (CRLF and lone CR are normalized to LF); it does not depend on Git metadata, installation paths, bytecode/cache files, or installer metadata. If EkzD cannot determine that exact source identity safely, the command exits non-zero instead of printing a placeholder build value.
+
 `ekzd status` is the operator-facing workflow compass. For an active session it shows the objective, baseline branch and HEAD, declared implementation branch, current branch, worktree state, commit budget, verification state, and the next expected action. Its verification state is one of the workflow-facing states `not run`, `passed`, `stale`, `failed`, or `blocked` as appropriate. A previously successful verification becomes `stale` if the exact supported Git-visible state changes. An exceeded commit budget or history that no longer descends from the frozen baseline is shown as `blocked` instead of suggesting verification can continue normally.
 
 ## Stateless worker checking
 
 `ekzd check` is a separate worker-side path for implementation environments that should validate a frozen task without owning EkzD's local session lifecycle. Unlike `start`, `verify`, and `finish`, worker checking does not require, read, or update `.ekzd/session.json`. The existing session workflow remains the maintainer/operator acceptance path.
 
-Worker authority comes from a standalone schema-version-1 TOML task manifest. The file may live outside the repository, and every result identifies the exact manifest bytes with a SHA-256 digest. Repository-level verification is still trusted from `.ekzd/project.toml` at the manifest's frozen baseline commit; optional task verification steps are additive and cannot replace those project checks.
+Worker authority comes from a standalone TOML task manifest. Schema version 1 remains accepted for compatibility, while schema version 2 adds an exact EkzD harness identity pin. The file may live outside the repository, and every result identifies the exact manifest bytes with a SHA-256 digest. Repository-level verification is still trusted from `.ekzd/project.toml` at the manifest's frozen baseline commit; optional task verification steps are additive and cannot replace those project checks.
 
-A minimal task manifest looks like this:
+A schema-v1 task remains valid and intentionally does not pin the EkzD harness build:
 
 ```toml
 schema_version = 1
@@ -114,6 +117,29 @@ command = ["python3", "-m", "unittest", "tests.test_validation"]
 cwd = "."
 timeout_seconds = 120
 ```
+
+Schema-v1 checks emit a non-blocking warning that the harness build is unpinned. To pin the worker to one exact EkzD build, use schema version 2 and add the required `[ekzd]` table:
+
+```toml
+schema_version = 2
+objective = "Implement registration validation"
+baseline = "0123456789abcdef0123456789abcdef01234567"
+implementation_branch = "feat/registration-validation"
+max_commits = 4
+
+[ekzd]
+version = "0.2.0"
+build_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+[scope]
+include = ["src/", "tests/"]
+exclude = []
+
+[acceptance]
+criteria = ["Validation behavior is covered by tests."]
+```
+
+For schema v2, both the semantic version and build SHA-256 must match the executing EkzD identity before any project or task verification command runs. A mismatch is blocking. If the executing build identity cannot be determined reliably, worker checking fails closed and cannot report readiness. Structured worker results include the executing EkzD `version` and `build_sha256` when available, and human-readable `ekzd check` output displays the same identity.
 
 During implementation, run a development check against the current HEAD plus staged, unstaged, and untracked non-ignored work:
 
@@ -282,6 +308,7 @@ Install it from the repository with:
 ```sh
 python3 -m pip install .
 ekzd --help
+ekzd --version
 ```
 
 Run its tests with:
