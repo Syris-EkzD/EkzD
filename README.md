@@ -74,12 +74,14 @@ ekzd prompt
 ekzd context
 ekzd context --json
 ekzd verify
-ekzd handoff --done "implemented validation" --next "review edge cases"
+ekzd check --task /path/to/task.toml
+ekzd abort
 ekzd finish --accept
 ```
 
-`ekzd status` is the operator-facing workflow compass. For an active session it shows the objective, baseline branch and HEAD, declared implementation branch, current branch, worktree state, commit budget, verification state, and the next expected action. Its verification state is one of the workflow-facing states `not run`, `passed`, `stale`, `failed`, or `blocked` as appropriate. A previously successful verification becomes `stale` if the exact supported Git-visible state changes. An exceeded commit budget or history that no longer descends from the frozen baseline is shown as `blocked` instead of suggesting verification can continue normally.
+Running bare `ekzd` is deterministic and non-interactive: it prints the ordinary command-line help and exits successfully. Task lifecycle actions are explicit subcommands; EkzD does not open a menu or TUI.
 
+`ekzd status` is the operator-facing workflow compass. For an active session it shows the objective, baseline branch and HEAD, declared implementation branch, current branch, worktree state, commit budget, verification state, and the next expected action. Its verification state is one of the workflow-facing states `not run`, `passed`, `stale`, `failed`, or `blocked` as appropriate. A previously successful verification becomes `stale` if the exact supported Git-visible state changes. An exceeded commit budget or history that no longer descends from the frozen baseline is shown as `blocked` instead of suggesting verification can continue normally.
 
 ## Stateless worker checking
 
@@ -140,29 +142,9 @@ ekzd abort
 
 `ekzd init` creates `.ekzd/project.toml` and ignores `.ekzd/session.json`. Before `ekzd start`, configure and commit `.ekzd/project.toml`. V1.1 also requires the working tree to be clean when starting through the CLI so the recorded task baseline can be reproduced by a separate development environment. Session state remains local and disposable.
 
-## Terminal interface
+## CLI output
 
-Running bare `ekzd` in a supported interactive terminal launches EkzD's persistent terminal session. The session uses an alternate screen when the terminal safely supports it and presents active-task and idle states differently. An active task keeps the existing framed operational dashboard with the current task, branch, session, verification, commit budget, and recommended next action. When no task is active, EkzD instead shows a concise landing card that identifies the project, explains that EkzD is ready for a new task, summarizes its purpose, and points to the next action without inventing branch, verification, or commit placeholders.
-
-Selecting **Start task** in the bare interactive experience collects the proposed objective and implementation branch, then pauses before session creation for an explicit review of the currently committed `.ekzd/project.toml` contract. The review summarizes the project, source and scope counts, configured verification steps, and session commit limit. The operator must choose to confirm and start, update the contract first, or cancel. Updating first or canceling creates no session; the update path directs the operator to edit and commit `.ekzd/project.toml` before retrying. EkzD does not try to infer whether the contract semantically matches the objective. This review gate applies only to the interactive Start task flow; explicit `ekzd start` keeps its existing command contract.
-
-If the latest session was finished or aborted, the idle screen may show a bordered secondary **Previous task** card using only the latest persisted session state. It clearly labels the historical outcome and objective and, when available, the implementation branch, verification state, and result/acceptance state. Finished/accepted and passed values use success semantics, aborted/stale/not-run values use warning semantics, and failed/blocked/error values use failure semantics. With no previous session, the card is omitted. Persistent idle actions remain focused on starting a task or exiting, while the fallback/non-persistent interaction may still expose `View task`. Explicit `ekzd status` remains unchanged.
-
-Persistent mode prioritizes the authoritative current dashboard over transcript history. Normal interactive actions replace the small recent-feedback area with a concise success, warning, or failure message instead of stacking full command summaries across redraws; the fallback scrolling interface may continue printing sequential command output. The terminal session remains a presentation/controller over the existing EkzD operations and does not duplicate verification, acceptance, scope, Git, or trust logic.
-
-Selecting **Generate implementation prompt** opens the complete deterministic implementation contract inside the same persistent EkzD alternate-screen session in an `EkzD · Implementation Prompt` viewer. The viewer supports lightweight keyboard navigation with Up/Down, Page Up/Page Down, Home/End, `c` or `C` to copy the complete exact contract to the system clipboard, and Enter, Escape, or `q` to return. Copying happens only after that explicit action; opening the viewer does not alter the clipboard. If no supported clipboard mechanism succeeds, the viewer reports clipboard unavailability and remains usable. Returning redraws the normal persistent EkzD home screen. The viewer uses the same exact generated contract as the existing prompt operation; it does not maintain a separate formatter. The explicit `ekzd prompt` command remains deterministic raw plain text for piping, automation, or direct handoff.
-
-EkzD degrades conservatively when terminal screen control is unsuitable. Non-TTY bare invocation never waits for input, `TERM=dumb` and very small or unsupported terminals use the plain scrolling interactive presentation, and alternate-screen cleanup restores the previous terminal display on normal exit and failure paths. In supported persistent terminals, EkzD also suppresses alternate-screen mouse-wheel translation so wheel activity does not become menu input, then restores the terminal's prior scroll mode and display state when the session exits.
-
-Human-facing color remains semantic:
-
-- green: successful, passed, finished, accepted, or clean state;
-- red: failure, blocked, or error state;
-- yellow: warning, aborted, stale, or not-run state;
-- cyan/bold: structural headings and important interactive labels;
-- dim text: genuinely secondary explanatory details and low-priority metadata.
-
-Colors are enabled automatically only for interactive terminals. They are disabled for redirected/piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. Screen-control sequences used by a supported persistent terminal are independent of color styling. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains deterministic plain text suitable for direct handoff.
+Human-readable explicit commands use semantic color when standard output is an interactive terminal. Color is disabled for redirected or piped output, when `TERM=dumb`, or when the standard `NO_COLOR` environment variable is present. `ekzd context --json` always remains machine-readable JSON without ANSI styling, and `ekzd prompt` remains deterministic plain text suitable for direct handoff.
 
 ## Project configuration
 
@@ -256,7 +238,7 @@ Acceptance requires the current supported Git-visible state to exactly match the
 
 The exact-state fingerprint covers tracked, staged, unstaged, and untracked state under V1's supported conventional Git checkout model. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. Tracked files using content filters are rejected rather than fingerprinted through a potentially transformed Git view. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
 
-## Context, prompt, status, and handoff
+## Context, prompt, and status
 
 `ekzd prompt` renders the implementation-facing contract for an active V1.1 session. Legacy/API-started sessions that lack the portable V1.1 workflow metadata cannot produce this handoff; start a fresh CLI session with an explicit `--branch`. A legacy session whose recorded baseline was dirty is likewise rejected because another environment could not reproduce that state from the baseline commit alone.
 
@@ -271,8 +253,6 @@ The generated instructions are environment-agnostic: a development environment w
 The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the contract; V1 does not semantically read or enforce their prose by itself.
 
 Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: canonical configuration integrity, protected harness-history integrity, local session-state integrity, supported Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance.
-
-`ekzd handoff` records semantic progress (`--done`) and next actions (`--next`) in the local session state. It does not modify project documentation automatically.
 
 ## Boundaries
 

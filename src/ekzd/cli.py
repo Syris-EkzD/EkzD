@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from .check import render_worker_check, unavailable_worker_result
 from .core import (
     HarnessError,
     abort_session,
@@ -13,16 +14,12 @@ from .core import (
     finish_session,
     init_project,
     read_state,
-    update_handoff,
     verify_session,
 )
-from .check import render_worker_check, unavailable_worker_result
-from .interactive import run_interactive
 from .ui import (
     failure,
     render_command_summary,
     render_context_ui,
-    render_handoff_ui,
     render_status_ui,
     render_verification_ui,
     supports_color,
@@ -60,10 +57,6 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--final", action="store_true", help="Require a clean final handoff candidate.")
     check.add_argument("--json", action="store_true", dest="as_json", help="Emit one structured JSON result.")
 
-    handoff = sub.add_parser("handoff", help="Record semantic handoff notes.")
-    handoff.add_argument("--done", action="append", default=[])
-    handoff.add_argument("--next", action="append", dest="next_items", default=[])
-
     sub.add_parser("abort", help="Close the active session without acceptance.")
 
     finish = sub.add_parser("finish", help="Accept and close a verified session.")
@@ -72,22 +65,15 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def _interactive_terminal() -> bool:
-    return bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
-        getattr(sys.stdout, "isatty", lambda: False)()
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    color = supports_color(sys.stdout)
+    argument_parser = parser()
+    args = argument_parser.parse_args(argv)
 
-    if args.command is None and not _interactive_terminal():
-        print(
-            "EkzD: no command provided in a non-interactive environment. Run `ekzd --help` to see available commands.",
-            file=sys.stderr,
-        )
-        return 2
+    if args.command is None:
+        argument_parser.print_help()
+        return 0
+
+    color = supports_color(sys.stdout)
 
     if args.command == "check":
         try:
@@ -103,8 +89,6 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         root = find_root(Path.cwd())
-        if args.command is None:
-            return run_interactive(root, enabled=color)
         if args.command == "init":
             path = init_project(root, args.name)
             print(
@@ -163,10 +147,6 @@ def main(argv: list[str] | None = None) -> int:
             verification = verify_session(root)
             print(render_verification_ui(verification, enabled=color), end="")
             return 0 if verification["passed"] else 1
-        if args.command == "handoff":
-            handoff = update_handoff(root, done=args.done, next_items=args.next_items)
-            print(render_handoff_ui(handoff, enabled=color), end="")
-            return 0
         if args.command == "abort":
             state = abort_session(root)
             print(
