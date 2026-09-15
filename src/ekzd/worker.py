@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from . import __version__
 from .check import check_result, empty_worker_result, finalize_worker_result
 from .core import (
     CONFIG_RELATIVE,
@@ -23,6 +24,7 @@ from .core import (
     session_history_paths,
     validate_config,
 )
+from .identity import BuildIdentityUnavailable, runtime_identity
 from .task import TaskManifest, TaskVerificationStep, load_task_manifest, task_identity
 from .workflow import _origin_remote, _sanitize_repository_identifier
 
@@ -271,7 +273,14 @@ def _validate_baseline(root: Path, baseline: str) -> tuple[str, str]:
 
 
 def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dict[str, Any]:
-    result = empty_worker_result(task_path, final=final)
+    identity_error: str | None = None
+    try:
+        executing_identity: dict[str, str | None] = runtime_identity()
+    except BuildIdentityUnavailable as exc:
+        executing_identity = {"version": __version__, "build_sha256": None}
+        identity_error = str(exc)
+
+    result = empty_worker_result(task_path, final=final, ekzd_identity=executing_identity)
     identity = task_identity(task_path)
     result["task"] = identity
     try:
@@ -283,10 +292,54 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
     result["task"] = {
         "path": str(task.path),
         "sha256": task.sha256,
+        "schema_version": task.schema_version,
         "objective": task.objective,
     }
     result["baseline"] = task.baseline
     _add(result, "task-manifest", "PASS", "Task manifest schema and exact-byte identity are valid.")
+
+    if identity_error is not None:
+        _add(
+            result,
+            "ekzd-identity",
+            "UNAVAILABLE",
+            f"Exact executing EkzD build identity is unavailable: {identity_error}",
+        )
+        return finalize_worker_result(result)
+
+    executing_version = str(executing_identity["version"])
+    executing_build = str(executing_identity["build_sha256"])
+    if task.schema_version == 1:
+        _add(
+            result,
+            "ekzd-identity",
+            "WARN",
+            "Task schema v1 does not pin the EkzD harness build.",
+            required=False,
+            version=executing_version,
+            build_sha256=executing_build,
+        )
+    elif task.ekzd_version == executing_version and task.ekzd_build_sha256 == executing_build:
+        _add(
+            result,
+            "ekzd-identity",
+            "PASS",
+            "Executing EkzD version and build SHA-256 match the schema-v2 task pin.",
+            version=executing_version,
+            build_sha256=executing_build,
+        )
+    else:
+        _add(
+            result,
+            "ekzd-identity",
+            "FAIL",
+            "Executing EkzD version or build SHA-256 does not match the schema-v2 task pin.",
+            expected_version=task.ekzd_version,
+            expected_build_sha256=task.ekzd_build_sha256,
+            actual_version=executing_version,
+            actual_build_sha256=executing_build,
+        )
+        return finalize_worker_result(result)
 
     if shutil.which("git") is None:
         _add(result, "git-tool", "UNAVAILABLE", "Required executable is unavailable: git")

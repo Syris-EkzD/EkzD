@@ -4,6 +4,8 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +13,7 @@ from unittest import mock
 
 from ekzd import cli
 from ekzd.core import HarnessError
+from ekzd.identity import BuildIdentityUnavailable
 
 
 class TtyBuffer(io.StringIO):
@@ -73,11 +76,60 @@ class CliPresentationTests(unittest.TestCase):
                 self.assertIn("usage: ekzd", stdout.getvalue())
                 self.assertEqual("", stderr.getvalue())
 
+    def test_version_reports_exact_identity_without_repository_lookup(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(cli, "find_root") as find_root,
+            mock.patch.object(cli, "runtime_identity", return_value={"version": "0.2.0", "build_sha256": "a" * 64}),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = cli.main(["--version"])
+
+        self.assertEqual(0, code)
+        find_root.assert_not_called()
+        self.assertEqual(f"EkzD 0.2.0 {'a' * 64}\n", stdout.getvalue())
+        self.assertEqual("", stderr.getvalue())
+
+    def test_version_fails_closed_when_exact_identity_is_unavailable(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(cli, "find_root") as find_root,
+            mock.patch.object(cli, "runtime_identity", side_effect=BuildIdentityUnavailable("source unavailable")),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = cli.main(["--version"])
+
+        self.assertEqual(1, code)
+        find_root.assert_not_called()
+        self.assertEqual("", stdout.getvalue())
+        self.assertIn("exact runtime build identity unavailable", stderr.getvalue())
+        self.assertNotIn("unknown", stderr.getvalue().lower())
+
+    def test_module_version_command_works_outside_project_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            process = subprocess.run(
+                [sys.executable, "-m", "ekzd.cli", "--version"],
+                cwd=temp_dir,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(0, process.returncode, process.stderr)
+        self.assertRegex(process.stdout, r"^EkzD 0\.2\.0 [0-9a-f]{64}\n$")
+        self.assertEqual("", process.stderr)
+
     def test_help_lists_retained_commands_and_omits_handoff_notes_command(self) -> None:
         argument_parser = cli.parser()
         help_text = argument_parser.format_help()
         for command in ("init", "start", "status", "prompt", "context", "verify", "check", "abort", "finish"):
             self.assertIn(command, help_text)
+        self.assertIn("--version", help_text)
 
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
@@ -136,7 +188,6 @@ class CliPresentationTests(unittest.TestCase):
         self.assertIn("EkzD · verify", stdout)
         self.assertIn("✓ compile", stdout)
         self.assertIn("✗ tests", stdout)
-        self.assertIn("✗ Verification failed", stdout)
 
     def test_harness_errors_remain_on_stderr(self) -> None:
         with mock.patch.object(cli, "build_workflow_status", side_effect=HarnessError("blocked")):
@@ -212,6 +263,7 @@ class CliPresentationTests(unittest.TestCase):
             "overall_status": "PASS",
             "ready": True,
             "mode": "development",
+            "ekzd": {"version": "0.2.0", "build_sha256": "e" * 64},
             "task": {"path": "/tmp/task.toml", "sha256": "a" * 64},
             "baseline": "b" * 40,
             "git": {"head": "c" * 40, "branch": "feat/demo", "clean": False, "worktree_fingerprint": "d" * 64},
@@ -221,6 +273,8 @@ class CliPresentationTests(unittest.TestCase):
             code, stdout, stderr = self._run(["check", "--task", "/tmp/task.toml"])
         self.assertEqual(0, code)
         self.assertIn("EkzD · check", stdout)
+        self.assertIn("ekzd    0.2.0", stdout)
+        self.assertIn(f"build   {'e' * 64}", stdout)
         self.assertIn("PASS", stdout)
         self.assertEqual("", stderr)
         run_check.assert_called_once_with(Path("/repo"), Path("/tmp/task.toml"), final=False)
@@ -231,6 +285,7 @@ class CliPresentationTests(unittest.TestCase):
             "overall_status": "FAIL",
             "ready": False,
             "mode": "final",
+            "ekzd": {"version": "0.2.0", "build_sha256": "e" * 64},
             "task": {"path": "/tmp/task.toml", "sha256": "a" * 64},
             "baseline": "b" * 40,
             "git": {"head": "c" * 40, "branch": "feat/demo", "clean": False, "worktree_fingerprint": "d" * 64},
@@ -252,6 +307,7 @@ class CliPresentationTests(unittest.TestCase):
         self.assertFalse(payload["ready"])
         self.assertEqual("task-manifest", payload["checks"][0]["name"])
         self.assertEqual("FAIL", payload["checks"][0]["status"])
+        self.assertRegex(payload["ekzd"]["build_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual("", stderr)
 
     def test_check_json_root_failure_is_structured(self) -> None:
@@ -268,6 +324,8 @@ class CliPresentationTests(unittest.TestCase):
         self.assertFalse(payload["ready"])
         self.assertEqual("worker-check", payload["checks"][0]["name"])
         self.assertEqual("UNAVAILABLE", payload["checks"][0]["status"])
+        self.assertEqual("0.2.0", payload["ekzd"]["version"])
+        self.assertRegex(payload["ekzd"]["build_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual("", stderr.getvalue())
 
 

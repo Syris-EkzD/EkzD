@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+from .identity import BuildIdentityUnavailable, runtime_identity
 from .task import task_identity
 
 CHECK_STATES = frozenset({"PASS", "FAIL", "UNAVAILABLE", "WARN"})
@@ -38,12 +40,25 @@ def finalize_worker_result(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def empty_worker_result(task_path: Path, *, final: bool) -> dict[str, Any]:
+def _best_effort_runtime_identity() -> dict[str, str | None]:
+    try:
+        return runtime_identity()
+    except BuildIdentityUnavailable:
+        return {"version": __version__, "build_sha256": None}
+
+
+def empty_worker_result(
+    task_path: Path,
+    *,
+    final: bool,
+    ekzd_identity: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "overall_status": "UNAVAILABLE",
         "ready": False,
         "mode": "final" if final else "development",
+        "ekzd": ekzd_identity if ekzd_identity is not None else _best_effort_runtime_identity(),
         "task": {"path": str(task_path.expanduser().resolve()), "sha256": None},
         "baseline": None,
         "git": {
@@ -69,6 +84,10 @@ def render_worker_check(result: dict[str, Any]) -> str:
         f"status  {result['overall_status']}",
         f"mode    {result['mode']}",
     ]
+    ekzd = result.get("ekzd", {})
+    if ekzd.get("version"):
+        lines.append(f"ekzd    {ekzd['version']}")
+    lines.append(f"build   {ekzd.get('build_sha256') or 'unavailable'}")
     task = result.get("task", {})
     if task.get("sha256"):
         lines.append(f"task    {task['sha256']}")

@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ekzd"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A small, strict development harness for scoped and verifiable AI-assisted work."
 requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
 ekzd = "ekzd.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "ekzd.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
