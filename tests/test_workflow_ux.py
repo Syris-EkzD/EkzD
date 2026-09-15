@@ -8,7 +8,6 @@ from pathlib import Path
 
 from ekzd.core import HarnessError, abort_session, finish_session, start_session, verify_session
 from ekzd.workflow import (
-    build_contract_review,
     build_implementation_prompt,
     build_workflow_status,
     start_reproducible_session,
@@ -94,17 +93,6 @@ class WorkflowUxTests(unittest.TestCase):
         path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
         self._git("add", ".ekzd/project.toml")
         self._git("commit", "-m", "test config")
-
-    def test_contract_review_summarizes_committed_contract_without_starting_session(self) -> None:
-        review = build_contract_review(self.root)
-        self.assertEqual("demo", review["project"])
-        self.assertEqual(1, review["sources_count"])
-        self.assertEqual(1, review["scope_include_count"])
-        self.assertEqual(1, review["scope_exclude_count"])
-        self.assertEqual(1, review["constraint_count"])
-        self.assertEqual(1, review["verification_count"])
-        self.assertEqual(2, review["max_commits"])
-        self.assertFalse((self.root / ".ekzd/session.json").exists())
 
     def test_start_rejects_dirty_nonreproducible_baseline(self) -> None:
         (self.root / "notes.txt").write_text("local only\n", encoding="utf-8")

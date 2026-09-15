@@ -133,22 +133,6 @@ def start_reproducible_session(root: Path, objective: str, *, implementation_bra
     return state
 
 
-def build_contract_review(root: Path) -> dict[str, Any]:
-    config = load_committed_config(root, ready=True)
-    sources = config.get("sources", {}).get("paths", [])
-    scope = config.get("scope", {})
-    verification = config.get("verification", {}).get("steps", [])
-    return {
-        "project": config["project"]["name"],
-        "sources_count": len(sources),
-        "scope_include_count": len(scope.get("include", [])),
-        "scope_exclude_count": len(scope.get("exclude", [])),
-        "constraint_count": len(scope.get("constraints", [])),
-        "verification_count": len(verification),
-        "max_commits": config["session"]["max_commits"],
-    }
-
-
 def _bullets(values: list[str], *, empty: str = "(none)") -> list[str]:
     if not values:
         return [f"- {empty}"]
