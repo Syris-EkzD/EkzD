@@ -18,6 +18,17 @@ class TtyBuffer(io.StringIO):
         return True
 
 
+class ExplodingInput(io.StringIO):
+    def read(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("bare ekzd must not read interactive input")
+
+    def readline(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("bare ekzd must not read interactive input")
+
+    def isatty(self) -> bool:
+        return True
+
+
 class CliPresentationTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> tuple[int, str, str]:
         stdout = io.StringIO()
@@ -30,58 +41,58 @@ class CliPresentationTests(unittest.TestCase):
             code = cli.main(argv)
         return code, stdout.getvalue(), stderr.getvalue()
 
-    def test_no_subcommand_tty_enters_interactive_shell(self) -> None:
-        stdin = TtyBuffer()
-        stdout = TtyBuffer()
-        stderr = TtyBuffer()
-        with (
-            mock.patch.object(cli.sys, "stdin", stdin),
-            mock.patch.object(cli.sys, "stdout", stdout),
-            mock.patch.object(cli.sys, "stderr", stderr),
-            mock.patch.object(cli, "find_root", return_value=Path("/repo")),
-            mock.patch.object(cli, "run_interactive", return_value=0) as run_interactive,
-            mock.patch.dict(os.environ, {}, clear=True),
-        ):
-            code = cli.main([])
-
-        self.assertEqual(0, code)
-        run_interactive.assert_called_once_with(Path("/repo"), enabled=True)
-        self.assertEqual("", stderr.getvalue())
-
-    def test_no_subcommand_non_tty_never_enters_interactive_shell(self) -> None:
-        stdin = io.StringIO()
+    def test_no_subcommand_prints_help_and_exits_successfully_without_repository_lookup(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
-            mock.patch.object(cli.sys, "stdin", stdin),
-            mock.patch.object(cli.sys, "stdout", stdout),
-            mock.patch.object(cli.sys, "stderr", stderr),
-            mock.patch.object(cli, "run_interactive") as run_interactive,
-        ):
-            code = cli.main([])
-
-        self.assertNotEqual(0, code)
-        run_interactive.assert_not_called()
-        self.assertIn("non-interactive", stderr.getvalue())
-        self.assertIn("ekzd --help", stderr.getvalue())
-        self.assertNotIn("\x1b[", stderr.getvalue())
-
-    def test_no_subcommand_no_color_passes_plain_mode_to_interactive_shell(self) -> None:
-        stdin = TtyBuffer()
-        stdout = TtyBuffer()
-        stderr = TtyBuffer()
-        with (
-            mock.patch.object(cli.sys, "stdin", stdin),
-            mock.patch.object(cli.sys, "stdout", stdout),
-            mock.patch.object(cli.sys, "stderr", stderr),
-            mock.patch.object(cli, "find_root", return_value=Path("/repo")),
-            mock.patch.object(cli, "run_interactive", return_value=0) as run_interactive,
-            mock.patch.dict(os.environ, {"NO_COLOR": "1"}, clear=True),
+            mock.patch.object(cli, "find_root") as find_root,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
         ):
             code = cli.main([])
 
         self.assertEqual(0, code)
-        run_interactive.assert_called_once_with(Path("/repo"), enabled=False)
+        find_root.assert_not_called()
+        self.assertIn("usage: ekzd", stdout.getvalue())
+        self.assertEqual("", stderr.getvalue())
+
+    def test_no_subcommand_does_not_read_interactive_input_or_depend_on_tty(self) -> None:
+        for stdin in (ExplodingInput(), io.StringIO()):
+            with self.subTest(tty=stdin.isatty()):
+                stdout = TtyBuffer()
+                stderr = io.StringIO()
+                with (
+                    mock.patch.object(cli.sys, "stdin", stdin),
+                    mock.patch.object(cli.sys, "stdout", stdout),
+                    mock.patch.object(cli.sys, "stderr", stderr),
+                    mock.patch.object(cli, "find_root") as find_root,
+                ):
+                    code = cli.main([])
+                self.assertEqual(0, code)
+                find_root.assert_not_called()
+                self.assertIn("usage: ekzd", stdout.getvalue())
+                self.assertEqual("", stderr.getvalue())
+
+    def test_help_lists_retained_commands_and_omits_handoff_notes_command(self) -> None:
+        argument_parser = cli.parser()
+        help_text = argument_parser.format_help()
+        for command in ("init", "start", "status", "prompt", "context", "verify", "check", "abort", "finish"):
+            self.assertIn(command, help_text)
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            argument_parser.parse_args(["handoff"])
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("invalid choice", stderr.getvalue())
+
+    def test_check_help_remains_available(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["check", "--help"])
+        self.assertEqual(0, raised.exception.code)
+        self.assertIn("--task", stdout.getvalue())
+        self.assertIn("--final", stdout.getvalue())
+        self.assertIn("--json", stdout.getvalue())
 
     def test_prompt_remains_exact_plain_contract_output(self) -> None:
         contract = "Repository: github.com/example/demo\nObjective\n\nDo the thing.\n"
@@ -151,7 +162,7 @@ class CliPresentationTests(unittest.TestCase):
             "max_commits": 3,
             "verification": "not run",
             "blocked_reason": None,
-            "next": "Generate the handoff.",
+            "next": "Generate the implementation prompt.",
         }
         stdout = TtyBuffer()
         stderr = TtyBuffer()

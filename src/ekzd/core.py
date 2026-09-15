@@ -398,7 +398,6 @@ def start_session(root: Path, objective: str) -> dict[str, Any]:
         "start_git": git_state(root),
         "config_digest": config_digest(root),
         "session_policy": {"max_commits": config["session"]["max_commits"]},
-        "handoff": {"done": [], "next": []},
         "verification": None,
         "acceptance": None,
     }
@@ -648,16 +647,6 @@ def verify_session(root: Path) -> dict[str, Any]:
     state["acceptance"] = None
     write_state(root, state)
     return verification
-
-
-def update_handoff(root: Path, *, done: list[str], next_items: list[str]) -> dict[str, Any]:
-    state = _active_state(root)
-    handoff = state.setdefault("handoff", {"done": [], "next": []})
-    handoff["done"].extend(item.strip() for item in done if item.strip())
-    handoff["next"].extend(item.strip() for item in next_items if item.strip())
-    handoff["updated_at"] = utc_now()
-    write_state(root, state)
-    return handoff
 
 
 def abort_session(root: Path) -> dict[str, Any]:

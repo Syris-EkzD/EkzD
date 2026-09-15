@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, build_context, init_project, load_config, render_context, start_session
+from ekzd.core import HarnessError, build_context, init_project, load_config, read_state, render_context, start_session
 
 
 VALID_CONFIG = """schema_version = 1
@@ -50,6 +51,14 @@ class EkzDCoreTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def _commit_valid_config(self) -> Path:
+        config = self.root / ".ekzd/project.toml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text(VALID_CONFIG, encoding="utf-8")
+        subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "add EkzD contract"], cwd=self.root, check=True)
+        return config
 
     def test_init_creates_template_and_ignores_session(self) -> None:
         init_project(self.root, "Demo")
@@ -157,6 +166,25 @@ class EkzDCoreTests(unittest.TestCase):
         rendered = render_context(context)
         self.assertIn("## Verification", rendered)
         self.assertIn('"name": "syntax"', rendered)
+
+    def test_new_session_state_does_not_initialize_handoff_notes(self) -> None:
+        self._commit_valid_config()
+        state = start_session(self.root, "Use explicit commands")
+        self.assertNotIn("handoff", state)
+        persisted = json.loads((self.root / ".ekzd/session.json").read_text(encoding="utf-8"))
+        self.assertNotIn("handoff", persisted)
+
+    def test_legacy_session_state_with_handoff_field_remains_readable(self) -> None:
+        state_path = self.root / ".ekzd/session.json"
+        state_path.parent.mkdir()
+        legacy = {
+            "schema_version": 1,
+            "status": "aborted",
+            "objective": "Historical task",
+            "handoff": {"done": ["old note"], "next": ["old next"]},
+        }
+        state_path.write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertEqual(legacy, read_state(self.root))
 
     def test_rejects_source_outside_project(self) -> None:
         config = VALID_CONFIG.replace('paths = [\"README.md\"]', 'paths = [\"../secret.txt\"]')

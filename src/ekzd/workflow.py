@@ -133,22 +133,6 @@ def start_reproducible_session(root: Path, objective: str, *, implementation_bra
     return state
 
 
-def build_contract_review(root: Path) -> dict[str, Any]:
-    config = load_committed_config(root, ready=True)
-    sources = config.get("sources", {}).get("paths", [])
-    scope = config.get("scope", {})
-    verification = config.get("verification", {}).get("steps", [])
-    return {
-        "project": config["project"]["name"],
-        "sources_count": len(sources),
-        "scope_include_count": len(scope.get("include", [])),
-        "scope_exclude_count": len(scope.get("exclude", [])),
-        "constraint_count": len(scope.get("constraints", [])),
-        "verification_count": len(verification),
-        "max_commits": config["session"]["max_commits"],
-    }
-
-
 def _bullets(values: list[str], *, empty: str = "(none)") -> list[str]:
     if not values:
         return [f"- {empty}"]
@@ -312,40 +296,15 @@ def _blocked_status(
     }
 
 
-def _previous_session_status(state: dict[str, Any]) -> dict[str, object]:
-    workflow = state.get("workflow")
-    branch = workflow.get("implementation_branch") if isinstance(workflow, dict) else None
-    verification = state.get("verification")
-    if isinstance(verification, dict):
-        verification_state = "passed" if verification.get("passed") else "failed"
-    else:
-        verification_state = "not run"
-
-    acceptance = state.get("acceptance")
-    if state.get("status") == "finished":
-        result = "accepted" if isinstance(acceptance, dict) and acceptance.get("explicit_approval") else "finished"
-    else:
-        result = "aborted"
-
-    return {
-        "previous_implementation_branch": branch,
-        "previous_verification": verification_state,
-        "previous_result": result,
-    }
-
-
 def build_workflow_status(root: Path) -> dict[str, Any]:
     state = read_state(root)
     if not state or state.get("status") != "active":
         status = state.get("status") if state else "none"
-        result: dict[str, Any] = {
+        return {
             "session_status": status,
             "objective": state.get("objective") if state else None,
             "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
         }
-        if state and status in {"finished", "aborted"}:
-            result.update(_previous_session_status(state))
-        return result
 
     enforce_session_contract(root, state)
     start_head = _session_start_head(state)
