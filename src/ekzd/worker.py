@@ -120,14 +120,31 @@ def _tracked_snapshot(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _hostless_path_has_credential_shape(scheme: str, path: str) -> bool:
+    head = path.lstrip("/").split("/", 1)[0]
+    if "@" not in head:
+        return False
+    userinfo, host = head.rsplit("@", 1)
+    if not userinfo or not host:
+        return False
+    if scheme == "file":
+        return ":" in userinfo
+    return True
+
+
 def _safe_repository_identifier(value: str) -> str:
     raw = value.strip()
     try:
         parsed = urlsplit(raw)
         if "://" in raw:
-            if not parsed.scheme or not parsed.hostname:
+            if not parsed.scheme:
                 raise ValueError
-            parsed.port
+            if parsed.netloc:
+                if not parsed.hostname:
+                    raise ValueError
+                parsed.port
+            elif _hostless_path_has_credential_shape(parsed.scheme, parsed.path):
+                raise ValueError
         elif "@" in raw:
             if raw.count("@") != 1:
                 raise ValueError
@@ -139,10 +156,19 @@ def _safe_repository_identifier(value: str) -> str:
         sanitized_parsed = urlsplit(sanitized)
         if (
             not sanitized
-            or "@" in sanitized
             or sanitized_parsed.username is not None
             or sanitized_parsed.password is not None
-            or ("://" in sanitized and (not sanitized_parsed.scheme or not sanitized_parsed.hostname))
+            or (sanitized_parsed.netloc and "@" in sanitized_parsed.netloc)
+            or (
+                "://" in sanitized
+                and (
+                    not sanitized_parsed.scheme
+                    or (
+                        not sanitized_parsed.netloc
+                        and _hostless_path_has_credential_shape(sanitized_parsed.scheme, sanitized_parsed.path)
+                    )
+                )
+            )
         ):
             raise ValueError
         return sanitized

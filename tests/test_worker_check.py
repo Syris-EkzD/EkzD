@@ -320,6 +320,45 @@ class WorkerCheckTests(unittest.TestCase):
         self.assertNotIn("supersecret", serialized)
         self.assertNotIn("hunter2", serialized)
 
+    def test_repository_identity_hostless_file_url_matches(self) -> None:
+        self._git("remote", "add", "origin", "file:///tmp/demo.git")
+        self._write_task(repository="file:///tmp/demo.git")
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["repository-identity"]
+
+        self.assertEqual("PASS", check["status"])
+        self.assertEqual("file:///tmp/demo", check["details"]["repository"])
+
+    def test_repository_identity_hostless_file_url_strips_query_and_fragment(self) -> None:
+        self._git("remote", "add", "origin", "file:///tmp/demo.git?token=originsecret#originfrag")
+        self._write_task(repository="file:///tmp/demo.git?token=tasksecret#taskfrag")
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["repository-identity"]
+
+        self.assertEqual("PASS", check["status"])
+        self.assertEqual("file:///tmp/demo", check["details"]["repository"])
+        serialized = json.dumps(result)
+        for secret in ("originsecret", "originfrag", "tasksecret", "taskfrag"):
+            self.assertNotIn(secret, serialized)
+
+    def test_hostless_relaxation_does_not_allow_malformed_credentials(self) -> None:
+        self._git("remote", "add", "origin", "https://github.com/example/demo.git")
+        self._write_task(
+            repository="https:///secretuser:secretpass@github.com/example/demo.git?token=declaredtoken"
+        )
+
+        result = run_worker_check(self.root, self.task_path)
+        check = self._checks(result)["repository-identity"]
+
+        self.assertEqual("UNAVAILABLE", check["status"])
+        serialized = json.dumps(result)
+        for secret in ("secretuser", "secretpass", "declaredtoken"):
+            self.assertNotIn(secret, serialized)
+        self.assertNotIn("expected", check.get("details", {}))
+        self.assertNotIn("actual", check.get("details", {}))
+
     def test_unsafe_declared_repository_identity_is_unavailable_without_secret_leak(self) -> None:
         self._git("remote", "add", "origin", "https://github.com/example/demo.git")
         self._write_task(
