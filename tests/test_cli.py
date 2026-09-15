@@ -74,10 +74,16 @@ class CliPresentationTests(unittest.TestCase):
                 self.assertEqual("", stderr.getvalue())
 
     def test_help_lists_retained_commands_and_omits_handoff_notes_command(self) -> None:
-        help_text = cli.parser().format_help()
+        argument_parser = cli.parser()
+        help_text = argument_parser.format_help()
         for command in ("init", "start", "status", "prompt", "context", "verify", "check", "abort", "finish"):
             self.assertIn(command, help_text)
-        self.assertNotIn("handoff", help_text)
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            argument_parser.parse_args(["handoff"])
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("invalid choice", stderr.getvalue())
 
     def test_check_help_remains_available(self) -> None:
         stdout = io.StringIO()
