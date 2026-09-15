@@ -16,6 +16,7 @@ from .core import (
     read_state,
     verify_session,
 )
+from .identity import BuildIdentityUnavailable, runtime_identity
 from .ui import (
     failure,
     render_command_summary,
@@ -30,6 +31,12 @@ from .workflow import build_implementation_prompt, build_workflow_status, start_
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="ekzd", description="EkzD — strict development harness.")
+    result.add_argument(
+        "--version",
+        action="store_true",
+        dest="show_version",
+        help="Show the executing EkzD semantic version and exact source build SHA-256.",
+    )
     sub = result.add_subparsers(dest="command")
 
     init = sub.add_parser("init", help="Create project harness configuration.")
@@ -68,6 +75,15 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argument_parser = parser()
     args = argument_parser.parse_args(argv)
+
+    if args.show_version:
+        try:
+            identity = runtime_identity()
+        except BuildIdentityUnavailable as exc:
+            print(f"EkzD: exact runtime build identity unavailable: {exc}", file=sys.stderr)
+            return 1
+        print(f"EkzD {identity['version']} {identity['build_sha256']}")
+        return 0
 
     if args.command is None:
         argument_parser.print_help()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import string
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,8 @@ from typing import Any
 
 from .core import DEFAULT_MAX_COMMITS, HarnessError
 
-TASK_SCHEMA_VERSION = 1
+TASK_SCHEMA_VERSIONS = frozenset({1, 2})
+_HEX_DIGITS = frozenset(string.hexdigits)
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class TaskVerificationStep:
 class TaskManifest:
     path: Path
     sha256: str
+    schema_version: int
     objective: str
     baseline: str
     implementation_branch: str
@@ -31,6 +34,8 @@ class TaskManifest:
     acceptance_criteria: tuple[str, ...]
     max_commits: int
     repository: str | None
+    ekzd_version: str | None
+    ekzd_build_sha256: str | None
     verification_steps: tuple[TaskVerificationStep, ...]
 
 
@@ -79,6 +84,25 @@ def _verification_steps(value: Any) -> tuple[TaskVerificationStep, ...]:
     return tuple(parsed)
 
 
+def _schema_v2_identity(data: dict[str, Any]) -> tuple[str, str]:
+    ekzd = data.get("ekzd")
+    if not isinstance(ekzd, dict):
+        raise HarnessError("task schema version 2 requires an [ekzd] table.")
+
+    version = ekzd.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise HarnessError("task ekzd.version must be a non-empty string.")
+
+    build_sha256 = ekzd.get("build_sha256")
+    if (
+        not isinstance(build_sha256, str)
+        or len(build_sha256) != 64
+        or any(character not in _HEX_DIGITS for character in build_sha256)
+    ):
+        raise HarnessError("task ekzd.build_sha256 must be an exact 64-character hexadecimal SHA-256.")
+    return version, build_sha256.lower()
+
+
 def task_identity(path: Path) -> dict[str, str | None]:
     resolved = path.expanduser().resolve()
     try:
@@ -104,8 +128,13 @@ def load_task_manifest(path: Path) -> TaskManifest:
         raise HarnessError("Task manifest must contain a TOML document.")
 
     schema_version = data.get("schema_version")
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != TASK_SCHEMA_VERSION:
-        raise HarnessError(f"task schema_version must be integer {TASK_SCHEMA_VERSION}.")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version not in TASK_SCHEMA_VERSIONS
+    ):
+        supported = ", ".join(str(value) for value in sorted(TASK_SCHEMA_VERSIONS))
+        raise HarnessError(f"task schema_version must be one of the supported integers: {supported}.")
 
     objective = data.get("objective")
     if not isinstance(objective, str) or not objective.strip():
@@ -152,9 +181,15 @@ def load_task_manifest(path: Path) -> TaskManifest:
     if repository is not None and (not isinstance(repository, str) or not repository.strip()):
         raise HarnessError("task repository must be a non-empty string when provided.")
 
+    ekzd_version: str | None = None
+    ekzd_build_sha256: str | None = None
+    if schema_version == 2:
+        ekzd_version, ekzd_build_sha256 = _schema_v2_identity(data)
+
     return TaskManifest(
         path=resolved,
         sha256=digest,
+        schema_version=schema_version,
         objective=objective,
         baseline=baseline,
         implementation_branch=branch,
@@ -163,5 +198,7 @@ def load_task_manifest(path: Path) -> TaskManifest:
         acceptance_criteria=criteria,
         max_commits=max_commits,
         repository=repository,
+        ekzd_version=ekzd_version,
+        ekzd_build_sha256=ekzd_build_sha256,
         verification_steps=_verification_steps(data.get("verification")),
     )
