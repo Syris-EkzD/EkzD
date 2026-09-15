@@ -56,29 +56,8 @@ def _meta(label: str, value: str, *, enabled: bool) -> str:
     return f"{muted(label, enabled=enabled)}  {value}"
 
 
-def _semantic_value_codes(kind: str, value: str) -> tuple[str, ...]:
-    normalized = value.lower()
-    if kind in {"session", "state", "result"}:
-        if normalized in {"active", "finished", "accepted", "passed", "clean"}:
-            return (GREEN,)
-        if normalized in {"aborted", "stale", "not run", "not accepted"}:
-            return (YELLOW,)
-        if normalized in {"failed", "blocked", "error"}:
-            return (RED,)
-    if kind == "verification":
-        if normalized == "passed":
-            return (GREEN,)
-        if normalized in {"failed", "blocked", "error"}:
-            return (RED,)
-        if normalized in {"stale", "not run"}:
-            return (YELLOW,)
-    return ()
-
-
-def _field(label: str, value: object, *, enabled: bool, kind: str = "neutral") -> str:
-    text = str(value)
-    rendered = paint(text, *_semantic_value_codes(kind, text), enabled=enabled)
-    return f"{paint(label, BOLD, CYAN, enabled=enabled)}  {rendered}"
+def _field(label: str, value: object, *, enabled: bool) -> str:
+    return f"{paint(label, BOLD, CYAN, enabled=enabled)}  {value}"
 
 
 def _list_items(values: list[str], *, enabled: bool) -> list[str]:
