@@ -188,6 +188,7 @@ class CliPresentationTests(unittest.TestCase):
         self.assertIn("EkzD · verify", stdout)
         self.assertIn("✓ compile", stdout)
         self.assertIn("✗ tests", stdout)
+        self.assertIn("✗ Verification failed", stdout)
 
     def test_harness_errors_remain_on_stderr(self) -> None:
         with mock.patch.object(cli, "build_workflow_status", side_effect=HarnessError("blocked")):
