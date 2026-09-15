@@ -16,6 +16,7 @@ from .core import (
     update_handoff,
     verify_session,
 )
+from .check import render_worker_check, unavailable_worker_result
 from .interactive import run_interactive
 from .ui import (
     failure,
@@ -26,6 +27,7 @@ from .ui import (
     render_verification_ui,
     supports_color,
 )
+from .worker import run_worker_check
 from .workflow import build_implementation_prompt, build_workflow_status, start_reproducible_session
 
 
@@ -52,6 +54,11 @@ def parser() -> argparse.ArgumentParser:
     context.add_argument("--json", action="store_true", dest="as_json")
 
     sub.add_parser("verify", help="Run configured verification and bind the result to current state.")
+
+    check = sub.add_parser("check", help="Run stateless worker checks from a standalone task manifest.")
+    check.add_argument("--task", required=True, type=Path, help="Path to the standalone task TOML manifest.")
+    check.add_argument("--final", action="store_true", help="Require a clean final handoff candidate.")
+    check.add_argument("--json", action="store_true", dest="as_json", help="Emit one structured JSON result.")
 
     handoff = sub.add_parser("handoff", help="Record semantic handoff notes.")
     handoff.add_argument("--done", action="append", default=[])
@@ -81,6 +88,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    if args.command == "check":
+        try:
+            root = find_root(Path.cwd())
+            result = run_worker_check(root, args.task, final=args.final)
+        except (HarnessError, OSError) as exc:
+            result = unavailable_worker_result(args.task, final=args.final, message=str(exc))
+        if args.as_json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(render_worker_check(result), end="")
+        return 0 if result["ready"] else 1
 
     try:
         root = find_root(Path.cwd())
