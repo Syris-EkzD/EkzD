@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from .candidate import capture_candidate
 from .core import (
     CONFIG_RELATIVE,
     STATE_RELATIVE,
@@ -120,7 +121,7 @@ def _workflow_metadata(state: dict[str, Any]) -> dict[str, Any]:
 
 def start_reproducible_session(root: Path, objective: str, *, implementation_branch: str) -> dict[str, Any]:
     baseline = git_state(root)
-    if baseline["status"]:
+    if baseline["status"] or not capture_candidate(root).clean:
         raise HarnessError(
             "A clean working tree is required before starting an EkzD session so the task baseline can be reproduced by another development environment."
         )
@@ -152,7 +153,7 @@ def build_implementation_prompt(root: Path) -> str:
     enforce_session_contract(root, state)
     start_head = _session_start_head(state)
     enforce_protected_session_history(root, start_head)
-    config = load_committed_config(root, ready=True)
+    config = load_committed_config(root, ready=True, source_revision=start_head)
 
     start_git = state.get("start_git")
     if not isinstance(start_git, dict):
@@ -274,7 +275,7 @@ def build_worker_task_manifest(root: Path) -> str:
     enforce_session_contract(root, state)
     start_head = _session_start_head(state)
     enforce_protected_session_history(root, start_head)
-    config = load_committed_config(root, ready=True)
+    config = load_committed_config(root, ready=True, source_revision=start_head)
 
     start_git = state.get("start_git")
     if not isinstance(start_git, dict):
@@ -356,8 +357,9 @@ def build_workflow_status(root: Path) -> dict[str, Any]:
     enforce_session_contract(root, state)
     start_head = _session_start_head(state)
     enforce_protected_session_history(root, start_head)
-    config = load_committed_config(root, ready=True)
+    config = load_committed_config(root, ready=True, source_revision=start_head)
     current_git = git_state(root)
+    candidate = capture_candidate(root)
     start_git = state["start_git"]
     workflow = _workflow_metadata(state)
 
@@ -387,7 +389,7 @@ def build_workflow_status(root: Path) -> dict[str, Any]:
 
     changed_since_start = (
         current_git["head"] != start_head
-        or bool(current_git["status"])
+        or not candidate.clean
         or commit_count > 0
     )
 
@@ -397,7 +399,7 @@ def build_workflow_status(root: Path) -> dict[str, Any]:
         if verification.get("passed"):
             verified_git = verification.get("git") == current_git
             verified_fingerprint = verification.get("state_fingerprint") == git_state_fingerprint(root)
-            if verified_git and verified_fingerprint:
+            if verified_git and verified_fingerprint and verification.get("candidate") == candidate.binding():
                 verification_status = "passed"
                 next_action = "Review the verified changes, then run `ekzd finish --accept` if you approve them."
             else:
@@ -407,7 +409,7 @@ def build_workflow_status(root: Path) -> dict[str, Any]:
             verification_status = "failed"
             next_action = "Fix the verification failure, then rerun `ekzd verify`."
     elif changed_since_start:
-        next_action = "When the implementation is ready, run `ekzd verify`."
+        next_action = "Commit all candidate changes on the declared implementation branch, then run `ekzd verify`."
     else:
         next_action = "Generate the semantic implementation handoff with `ekzd prompt` and the schema-v2 worker task with `ekzd task`."
 
@@ -420,7 +422,7 @@ def build_workflow_status(root: Path) -> dict[str, Any]:
         "implementation_branch": workflow["implementation_branch"],
         "baseline_head": start_head,
         "head": current_git["head"],
-        "worktree_clean": not current_git["status"],
+        "worktree_clean": candidate.clean,
         "commit_count": commit_count,
         "max_commits": max_commits,
         "verification": verification_status,

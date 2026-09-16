@@ -119,6 +119,9 @@ def ensure_tracked_paths_unfiltered(root: Path) -> None:
 
 
 def ensure_git_visibility_supported(root: Path) -> None:
+    from .candidate import ensure_supported_repository
+
+    ensure_supported_repository(root)
     ensure_index_paths_visible(root)
     ensure_tracked_paths_unfiltered(root)
 
@@ -138,8 +141,8 @@ def ensure_project_config_committed_clean(root: Path) -> None:
             "Project harness configuration must be a regular tracked file; symlinked contracts are not supported: "
             f"{path}"
         )
-    unstaged = run_git(root, "diff", "--name-only", "--no-renames", "--", path)
-    staged = run_git(root, "diff", "--cached", "--name-only", "--no-renames", "--", path)
+    unstaged = run_git(root, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "--no-renames", "--", path)
+    staged = run_git(root, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only", "--no-renames", "--", path)
     if unstaged or staged:
         raise HarnessError(
             "Project harness configuration must remain clean while an EkzD session is active; "
@@ -170,7 +173,7 @@ def _safe_relative_path(value: str, label: str) -> Path:
     return path
 
 
-def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> dict[str, Any]:
+def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, source_revision: str | None = None) -> dict[str, Any]:
     schema_version = data.get("schema_version")
     if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != SCHEMA_VERSION:
         raise HarnessError(f"schema_version must be integer {SCHEMA_VERSION}.")
@@ -185,8 +188,15 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True) -> 
     source_paths = _string_list(sources.get("paths", []), "sources.paths")
     for raw in source_paths:
         path = _safe_relative_path(raw, "source path")
-        if ready and not (root / path).is_file():
-            raise HarnessError(f"Configured source does not exist as a file: {raw}")
+        if ready:
+            if source_revision is None:
+                exists = (root / path).is_file()
+            else:
+                entry = run_git_bytes(root, "ls-tree", "-z", source_revision, "--", f":(literal){path.as_posix()}")
+                exists = entry.startswith((b"100644 blob ", b"100755 blob "))
+            if not exists:
+                location = f" at frozen baseline {source_revision}" if source_revision else ""
+                raise HarnessError(f"Configured source does not exist as a regular file{location}: {raw}")
 
     scope = data.get("scope", {})
     if not isinstance(scope, dict):
@@ -265,13 +275,13 @@ def committed_config_bytes(root: Path) -> bytes:
     return run_git_bytes(root, "show", f"HEAD:{CONFIG_RELATIVE.as_posix()}")
 
 
-def load_committed_config(root: Path, *, ready: bool = True) -> dict[str, Any]:
+def load_committed_config(root: Path, *, ready: bool = True, source_revision: str = "HEAD") -> dict[str, Any]:
     ensure_project_config_committed_clean(root)
     try:
         data = tomllib.loads(committed_config_bytes(root).decode("utf-8"))
     except (UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise HarnessError(f"Unable to read committed {CONFIG_RELATIVE}: {exc}") from exc
-    return validate_config(data, root, ready=ready)
+    return validate_config(data, root, ready=ready, source_revision=source_revision)
 
 
 def read_state(root: Path) -> dict[str, Any] | None:
@@ -316,36 +326,9 @@ def git_state(root: Path) -> dict[str, Any]:
 
 
 def git_state_fingerprint(root: Path) -> str:
-    ensure_git_visibility_supported(root)
-    digest = hashlib.sha256()
-    components = (
-        ("head", ("rev-parse", "HEAD")),
-        ("branch", ("branch", "--show-current")),
-        ("status", ("status", "--porcelain=v1", "--untracked-files=all")),
-        ("worktree-diff", ("diff", "--binary", "HEAD")),
-        ("index-diff", ("diff", "--binary", "--cached", "HEAD")),
-    )
-    for label, args in components:
-        digest.update(label.encode("utf-8") + b"\0")
-        digest.update(run_git_bytes(root, *args))
-        digest.update(b"\0")
+    from .candidate import capture_candidate
 
-    untracked = [path for path in run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if path]
-    for raw_path in sorted(untracked):
-        digest.update(b"untracked\0" + raw_path + b"\0")
-        path = root / raw_path.decode("utf-8", errors="surrogateescape")
-        if path.is_symlink():
-            digest.update(b"symlink\0")
-            digest.update(str(path.readlink()).encode("utf-8", errors="surrogateescape"))
-        elif path.is_file():
-            digest.update(b"file\0")
-            with path.open("rb") as handle:
-                while chunk := handle.read(1024 * 1024):
-                    digest.update(chunk)
-        else:
-            digest.update(b"missing-or-non-file\0")
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return capture_candidate(root).fingerprint
 
 
 def init_project(root: Path, name: str | None = None) -> Path:
@@ -410,7 +393,7 @@ def build_context(root: Path) -> dict[str, Any]:
     if state and state.get("status") == "active":
         enforce_session_contract(root, state)
         enforce_protected_session_history(root, _session_start_head(state))
-        config = load_committed_config(root, ready=True)
+        config = load_committed_config(root, ready=True, source_revision=_session_start_head(state))
     else:
         config = load_config(root, ready=True)
     return {
@@ -469,6 +452,8 @@ def session_history_paths(root: Path, start_head: str) -> set[str]:
             "--format=",
             "--name-only",
             "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
             "-z",
             f"{start_head}..HEAD",
         )
@@ -485,15 +470,10 @@ def enforce_protected_session_history(root: Path, start_head: str) -> None:
 
 
 def changed_paths(root: Path, *, start_head: str | None = None) -> list[str]:
-    ensure_git_visibility_supported(root)
-    committed: set[str] = set()
-    if start_head is not None:
-        committed = session_history_paths(root, start_head)
-    tracked = _decode_git_paths(run_git_bytes(root, "diff", "--name-only", "--no-renames", "-z"))
-    staged = _decode_git_paths(run_git_bytes(root, "diff", "--cached", "--name-only", "--no-renames", "-z"))
-    untracked = _decode_git_paths(run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z"))
-    untracked.discard(STATE_RELATIVE.as_posix())
-    return sorted(path for path in committed | tracked | staged | untracked if path)
+    from .candidate import capture_candidate
+
+    committed = session_history_paths(root, start_head) if start_head is not None else set()
+    return sorted(committed | set(capture_candidate(root).changed_paths))
 
 
 def _matches_scope(path: str, pattern: str) -> bool:
@@ -573,20 +553,41 @@ def enforce_session_budget(root: Path, config: dict[str, Any], state: dict[str, 
     return {"commit_count": commit_count, "max_commits": max_commits}
 
 
+def implementation_branch(state: dict[str, Any]) -> str:
+    workflow = state.get("workflow")
+    branch = workflow.get("implementation_branch") if isinstance(workflow, dict) else None
+    if not isinstance(branch, str) or not branch or branch == "(detached)":
+        raise HarnessError("Active session lacks a declared implementation branch; abort and restart with `ekzd start --branch`.")
+    return branch
+
+
 def verify_session(root: Path) -> dict[str, Any]:
+    from .candidate import capture_candidate, require_final
+
     state = _active_state(root)
-    state_digest = session_state_digest(root)
+    initial_state_digest = session_state_digest(root)
+    candidate = capture_candidate(root)
     start_head = _session_start_head(state)
     enforce_session_contract(root, state)
-    config = load_committed_config(root, ready=True)
+    config = load_committed_config(root, ready=True, source_revision=start_head)
     budget = enforce_session_budget(root, config, state)
     enforce_protected_session_history(root, start_head)
     paths = enforce_scope(root, config, start_head=start_head)
+    require_final(candidate, implementation_branch(state))
+    if _active_state(root) != state or session_state_digest(root) != initial_state_digest:
+        raise HarnessError("Session changed during verification preflight.")
+    # Invalidate earlier success before any verifier can execute or fail.
+    state["verification"] = None
+    state["acceptance"] = None
+    write_state(root, state)
+    state_digest = session_state_digest(root)
     results: list[dict[str, Any]] = []
     for step in config["verification"]["steps"]:
         cwd = (root / step.get("cwd", ".")).resolve()
         if root not in (cwd, *cwd.parents) or not cwd.is_dir():
             raise HarnessError(f"Verification cwd is invalid: {step.get('cwd', '.')}")
+        if capture_candidate(root) != candidate:
+            raise HarnessError("Candidate changed before a verification command; rerun verification.")
         try:
             process = subprocess.run(step["command"], cwd=cwd, text=True, capture_output=True, timeout=step.get("timeout_seconds", 600))
             result = {
@@ -620,6 +621,13 @@ def verify_session(root: Path) -> dict[str, Any]:
                 "passed": False,
                 "launch_error": True,
             }
+        try:
+            if capture_candidate(root) != candidate:
+                result["passed"] = False
+                result["candidate_error"] = "Verification command changed candidate state; mutation left untouched."
+        except HarnessError as exc:
+            result["passed"] = False
+            result["candidate_error"] = f"Candidate trust lost after verification command: {exc}"
         results.append(result)
         if not result["passed"]:
             break
@@ -628,21 +636,26 @@ def verify_session(root: Path) -> dict[str, Any]:
     if current_state != state or session_state_digest(root) != state_digest:
         raise HarnessError("EkzD session state changed during verification; verification cannot trust a modified session contract.")
     enforce_session_contract(root, state)
-    config = load_committed_config(root, ready=True)
+    config = load_committed_config(root, ready=True, source_revision=start_head)
     budget = enforce_session_budget(root, config, state)
     enforce_protected_session_history(root, start_head)
     paths = enforce_scope(root, config, start_head=start_head)
+    if capture_candidate(root) != candidate:
+        raise HarnessError("Candidate changed during verification; mutation left untouched and no success recorded.")
     passed = len(results) == len(config["verification"]["steps"]) and all(item["passed"] for item in results)
     verification = {
         "verified_at": utc_now(),
         "passed": passed,
         "config_digest": config_digest(root),
         "git": git_state(root),
-        "state_fingerprint": git_state_fingerprint(root),
+        "state_fingerprint": candidate.fingerprint,
+        "candidate": candidate.binding(),
         "changed_paths": paths,
         "session_budget": budget,
         "steps": results,
     }
+    if capture_candidate(root) != candidate or session_state_digest(root) != state_digest:
+        raise HarnessError("Candidate or session changed before verification evidence could be recorded.")
     state["verification"] = verification
     state["acceptance"] = None
     write_state(root, state)
@@ -659,15 +672,22 @@ def abort_session(root: Path) -> dict[str, Any]:
 
 
 def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
+    from .candidate import capture_candidate, require_final
+
     if not accept:
         raise HarnessError("Acceptance requires explicit `ekzd finish --accept` approval.")
     state = _active_state(root)
+    state_digest = session_state_digest(root)
+    candidate = capture_candidate(root)
+    require_final(candidate, implementation_branch(state))
     start_head = _session_start_head(state)
     enforce_session_contract(root, state)
-    config = load_committed_config(root, ready=True)
+    config = load_committed_config(root, ready=True, source_revision=start_head)
     verification = state.get("verification")
     if not isinstance(verification, dict) or not verification.get("passed"):
         raise HarnessError("Acceptance blocked: verification has not passed.")
+    if verification.get("candidate") != candidate.binding():
+        raise HarnessError("Acceptance blocked: final candidate differs from verification or evidence predates candidate binding; rerun verification.")
     if verification.get("config_digest") != config_digest(root):
         raise HarnessError("Acceptance blocked: project configuration changed after verification.")
     current_git = git_state(root)
@@ -678,8 +698,13 @@ def finish_session(root: Path, *, accept: bool) -> dict[str, Any]:
     enforce_session_budget(root, config, state)
     enforce_protected_session_history(root, start_head)
     enforce_scope(root, config, start_head=start_head)
+    if (capture_candidate(root) != candidate or session_state_digest(root) != state_digest
+            or _active_state(root) != state):
+        raise HarnessError("Candidate or session changed during acceptance.")
     acceptance = {
         "accepted_at": utc_now(),
+        "head": candidate.head,
+        "state_fingerprint": candidate.fingerprint,
         "criteria": list(config["acceptance"]["criteria"]),
         "explicit_approval": True,
         "verification_bound": True,

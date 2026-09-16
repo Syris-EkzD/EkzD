@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import shutil
 import subprocess
 import tomllib
@@ -9,6 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import __version__
+from .candidate import capture_candidate
 from .check import check_result, empty_worker_result, finalize_worker_result
 from .core import (
     CONFIG_RELATIVE,
@@ -34,69 +34,19 @@ def _add(result: dict[str, Any], name: str, status: str, message: str, *, requir
 
 
 def _baseline_project_config(root: Path, baseline: str) -> dict[str, Any]:
+    entry = run_git_bytes(root, "ls-tree", "-z", baseline, "--", CONFIG_RELATIVE.as_posix())
+    if not entry.startswith((b"100644 blob ", b"100755 blob ")):
+        raise HarnessError("Baseline project configuration must be a regular tracked file.")
     raw = run_git_bytes(root, "show", f"{baseline}:{CONFIG_RELATIVE.as_posix()}")
     try:
         data = tomllib.loads(raw.decode("utf-8"))
     except (UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise HarnessError(f"Unable to parse baseline {CONFIG_RELATIVE}: {exc}") from exc
-    config = validate_config(data, root, ready=False)
-    scope = config.get("scope", {})
-    if not scope.get("include"):
-        raise HarnessError("Baseline project scope.include must contain at least one entry.")
-    if not config.get("acceptance", {}).get("criteria"):
-        raise HarnessError("Baseline project acceptance.criteria must contain at least one entry.")
-    if not config.get("verification", {}).get("steps"):
-        raise HarnessError("Baseline project verification.steps must contain at least one step.")
-    return config
-
-
-def _worker_untracked_paths(root: Path) -> list[bytes]:
-    return sorted(
-        raw
-        for raw in run_git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
-        if raw and raw.decode("utf-8", errors="surrogateescape") != STATE_RELATIVE.as_posix()
-    )
-
-
-def _worker_fingerprint(root: Path) -> str:
-    ensure_git_visibility_supported(root)
-    digest = hashlib.sha256()
-    for label, args in (
-        (b"head", ("rev-parse", "HEAD")),
-        (b"branch", ("branch", "--show-current")),
-        (b"worktree-diff", ("diff", "--binary", "HEAD")),
-        (b"index-diff", ("diff", "--binary", "--cached", "HEAD")),
-    ):
-        digest.update(label + b"\0")
-        digest.update(run_git_bytes(root, *args))
-        digest.update(b"\0")
-    for raw_path in _worker_untracked_paths(root):
-        digest.update(b"untracked\0" + raw_path + b"\0")
-        path = root / raw_path.decode("utf-8", errors="surrogateescape")
-        if path.is_symlink():
-            digest.update(b"symlink\0")
-            digest.update(str(path.readlink()).encode("utf-8", errors="surrogateescape"))
-        elif path.is_file():
-            digest.update(b"file\0")
-            with path.open("rb") as handle:
-                while chunk := handle.read(1024 * 1024):
-                    digest.update(chunk)
-        else:
-            digest.update(b"missing-or-non-file\0")
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return validate_config(data, root, ready=True, source_revision=baseline)
 
 
 def _worktree_binding(root: Path) -> dict[str, Any]:
-    worktree_diff = run_git_bytes(root, "diff", "--binary", "HEAD")
-    index_diff = run_git_bytes(root, "diff", "--binary", "--cached", "HEAD")
-    untracked = _worker_untracked_paths(root)
-    return {
-        "head": run_git(root, "rev-parse", "HEAD"),
-        "branch": run_git(root, "branch", "--show-current") or "(detached)",
-        "clean": not worktree_diff and not index_diff and not untracked,
-        "worktree_fingerprint": _worker_fingerprint(root),
-    }
+    return capture_candidate(root).binding()
 
 
 def _scope_violations(paths: list[str], task: TaskManifest) -> list[str]:
@@ -107,19 +57,6 @@ def _scope_violations(paths: list[str], task: TaskManifest) -> list[str]:
         if any(_matches_scope(path, pattern) for pattern in task.exclude):
             violations.append(f"{path}: matches task scope.exclude")
     return violations
-
-
-def _tracked_snapshot(root: Path) -> str:
-    digest = hashlib.sha256()
-    for label, args in (
-        (b"head", ("rev-parse", "HEAD")),
-        (b"index", ("diff", "--binary", "--cached", "HEAD")),
-        (b"worktree", ("diff", "--binary", "HEAD")),
-    ):
-        digest.update(label + b"\0")
-        digest.update(run_git_bytes(root, *args))
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def _hostless_path_has_credential_shape(scheme: str, path: str) -> bool:
@@ -199,8 +136,7 @@ def _run_step(root: Path, prefix: str, step: dict[str, Any] | TaskVerificationSt
         return check_result(check_name, "UNAVAILABLE", f"Configured working directory must resolve inside the project: {cwd}"), False
 
     try:
-        before_tracked = _tracked_snapshot(root)
-        before_visible = _worker_fingerprint(root)
+        before_visible = capture_candidate(root)
     except (HarnessError, OSError) as exc:
         return check_result(check_name, "UNAVAILABLE", f"Unable to capture pre-check Git state: {exc}"), False
 
@@ -233,13 +169,12 @@ def _run_step(root: Path, prefix: str, step: dict[str, Any] | TaskVerificationSt
         item = check_result(check_name, "UNAVAILABLE", f"Unable to execute verification command: {exc}", command=command, cwd=cwd)
 
     try:
-        after_tracked = _tracked_snapshot(root)
-        after_visible = _worker_fingerprint(root)
+        after_visible = capture_candidate(root)
     except (HarnessError, OSError) as exc:
         item.setdefault("details", {})["post_check_git_error"] = str(exc)
         return item, True
 
-    mutated = before_tracked != after_tracked or before_visible != after_visible
+    mutated = before_visible != after_visible
     if mutated:
         item.setdefault("details", {})["git_state_mutated"] = True
     return item, mutated
@@ -476,6 +411,13 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
             name = step.name if isinstance(step, TaskVerificationStep) else str(step["name"])
             _add(result, f"{prefix}:{name}", "UNAVAILABLE", "Not run because an earlier verification command mutated Git-visible project state.")
             continue
+        try:
+            if _worktree_binding(root) != result["git"]:
+                raise HarnessError("Candidate changed between evaluation boundaries.")
+        except HarnessError as exc:
+            _add(result, "state-binding", "FAIL", str(exc))
+            mutation_detected = True
+            break
         item, mutated = _run_step(root, prefix, step)
         result["checks"].append(item)
         if mutated:
@@ -484,14 +426,10 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
 
     try:
         post = _worktree_binding(root)
-        if not mutation_detected:
-            result["git"] = post
-        elif post != result["git"]:
-            _add(result, "state-binding", "FAIL", "Git-visible state changed while verification was running; result remains bound to the pre-verification state and is not ready.")
-        else:
-            _add(result, "state-binding", "PASS", "Verification completed against the captured Git/worktree state.")
-        if not mutation_detected:
-            _add(result, "state-binding", "PASS", "Result is bound to the exact Git/worktree state evaluated.")
+        if post != result["git"]:
+            _add(result, "state-binding", "FAIL", "Candidate changed during verification; result remains bound to the initial state.")
+        elif not mutation_detected:
+            _add(result, "state-binding", "PASS", "Verification preserved the captured candidate state.")
     except (HarnessError, OSError) as exc:
         _add(result, "state-binding", "UNAVAILABLE", f"Unable to bind final Git/worktree state: {exc}")
 

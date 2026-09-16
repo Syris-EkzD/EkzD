@@ -4,6 +4,16 @@ This document defines the V1 acceptance contract and the V1.1 workflow that carr
 
 ## Verification
 
+Phase 1 uses one raw candidate snapshot primitive for worker and maintainer evidence. The binding includes HEAD, branch, stage-zero index blob identities and modes, tracked working-file bytes/modes (including deletions), symlink values without following targets, and non-ignored untracked paths/contents. Paths are byte-preserving and fields are length-delimited. Conflicted index stages are rejected. Textconv and external diff programs do not define candidate evidence or scope. Final cleanliness additionally requires raw working-file content and executable modes to match the index, and the index to match HEAD; Git checkout transformations do not qualify as clean merely because Git status hides them.
+
+Both `ekzd verify` and `ekzd check --final` require the declared implementation branch, a fully committed clean candidate, and no conflicts or in-progress merge/rebase/cherry-pick/revert/bisect operation. Submodules, shallow repositories, sparse checkout, replacement refs/grafts, hidden index flags, active tracked content filters, and special/nested candidate paths are rejected. Worker development checking may include dirty candidate files but does not relax unsupported-state checks.
+
+The initial candidate is retained throughout verification. Each command is bracketed by snapshots, and completion compares against that same initial binding. Persistent mutation or lost candidate trust fails the attempt, stops further command execution, and leaves mutations visible. Maintainer verification clears prior success before executing commands; acceptance requires the new candidate binding and rechecks it before recording the accepted HEAD. Older verification evidence must be regenerated.
+
+Sources are validated as regular files at the frozen baseline, not as files required to survive in the implementation worktree. Source deletion or renaming remains subject to ordinary scope rules.
+
+Snapshots assume quiescent local work and do not defend against hostile concurrent processes or transient modify-and-restore activity. Ignored files, external link targets, toolchains, and services remain outside the binding. Phase 1 does not add process-tree containment or environment reproducibility.
+
 A verification result is valid only for the exact supported Git-visible state that produced it and only under the canonical committed harness configuration captured when the session started.
 
 EkzD records:
@@ -176,7 +186,7 @@ Acceptance is a separate stage from verification.
 
 Acceptance requires the current tracked, staged, unstaged, and untracked state to exactly match the state bound to successful verification within V1's supported conventional checkout model. If the current state differs, the prior verification cannot be accepted and verification must be rerun. The `stale` state shown by `ekzd status` mirrors this rule for operator guidance; it does not replace the acceptance checks themselves.
 
-Git-ignored files are outside V1's exact-state fingerprint. A project that needs an ignored file to affect acceptance must check that requirement through a configured verification command. V1 does not recursively hash every ignored file by default. Tracked files with active content filters are rejected rather than accepted under a transformed Git representation.
+Git-ignored files remain outside the exact-state fingerprint even when a configured command checks them; changing one afterward does not invalidate stored evidence. V1 does not recursively hash every ignored file by default. Tracked files with active content filters are rejected rather than accepted under a transformed Git representation.
 
 ## What this standard does not prove
 

@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, finish_session, start_session, verify_session
+from ekzd.core import HarnessError, finish_session, verify_session
+from ekzd.workflow import start_reproducible_session
 
 
 CONFIG = """schema_version = 1
@@ -56,8 +57,10 @@ class AcceptanceTests(unittest.TestCase):
         (self.root / ".gitignore").write_text(".ekzd/session.json\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "init"], cwd=self.root, check=True)
-        start_session(self.root, "Change app")
+        start_reproducible_session(self.root, "Change app", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
         (self.root / "src/app.py").write_text("VALUE = 2\n", encoding="utf-8")
+        subprocess.run(["git", "commit", "-qam", "change app"], cwd=self.root, check=True)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -81,9 +84,8 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaises(HarnessError):
             finish_session(self.root, accept=True)
 
-    def test_finish_blocks_untracked_file_content_mutation(self) -> None:
+    def test_finish_blocks_new_untracked_file(self) -> None:
         untracked = self.root / "src/new.py"
-        untracked.write_text("VALUE = 1\n", encoding="utf-8")
         verify_session(self.root)
         untracked.write_text("VALUE = 2\n", encoding="utf-8")
 
@@ -118,9 +120,6 @@ class AcceptanceTests(unittest.TestCase):
             verify_session(self.root)
 
     def test_verification_allows_committed_in_scope_change(self) -> None:
-        subprocess.run(["git", "add", "src/app.py"], cwd=self.root, check=True)
-        subprocess.run(["git", "commit", "-qm", "change app"], cwd=self.root, check=True)
-
         verification = verify_session(self.root)
 
         self.assertTrue(verification["passed"])

@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, start_session, verify_session
+from ekzd.core import HarnessError, verify_session
+from ekzd.workflow import start_reproducible_session
 
 
 CONFIG = """schema_version = 1
@@ -51,7 +52,8 @@ class VerificationSideEffectTests(unittest.TestCase):
         (self.root / ".gitignore").write_text(".ekzd/session.json\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "init"], cwd=self.root, check=True)
-        start_session(self.root, "Update README")
+        start_reproducible_session(self.root, "Update README", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
