@@ -22,7 +22,7 @@ class IdentityTests(unittest.TestCase):
 
     def test_runtime_identity_uses_package_version_and_full_lowercase_sha256(self) -> None:
         identity = runtime_identity()
-        self.assertEqual("0.2.0", __version__)
+        self.assertEqual("0.3.0", __version__)
         self.assertEqual(__version__, identity["version"])
         self.assertRegex(identity["build_sha256"], r"^[0-9a-f]{64}$")
 

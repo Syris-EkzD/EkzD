@@ -17,6 +17,7 @@ from .core import (
     verify_session,
 )
 from .identity import BuildIdentityUnavailable, runtime_identity
+from .task import write_task_manifest_file
 from .ui import (
     failure,
     render_command_summary,
@@ -26,7 +27,12 @@ from .ui import (
     supports_color,
 )
 from .worker import run_worker_check
-from .workflow import build_implementation_prompt, build_workflow_status, start_reproducible_session
+from .workflow import (
+    build_implementation_prompt,
+    build_worker_task_manifest,
+    build_workflow_status,
+    start_reproducible_session,
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -53,6 +59,13 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="Show the active workflow state and next action.")
     sub.add_parser("prompt", help="Render the frozen implementation handoff for the active session.")
+
+    task = sub.add_parser("task", help="Export the canonical schema-v2 worker task for the active session.")
+    task.add_argument(
+        "--output",
+        type=Path,
+        help="Write the canonical task manifest to an external file instead of stdout.",
+    )
 
     context = sub.add_parser("context", help="Render project and session context.")
     context.add_argument("--json", action="store_true", dest="as_json")
@@ -134,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                         ("objective", str(state["objective"])),
                         ("implementation branch", str(state["workflow"]["implementation_branch"])),
                     ],
-                    next_action="Run `ekzd status` or generate the implementation handoff with `ekzd prompt`.",
+                    next_action="Run `ekzd status`, generate the semantic handoff with `ekzd prompt`, or export the worker task with `ekzd task`.",
                     enabled=color,
                 ),
                 end="",
@@ -151,6 +164,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "prompt":
             print(build_implementation_prompt(root), end="")
+            return 0
+        if args.command == "task":
+            manifest = build_worker_task_manifest(root)
+            if args.output is None:
+                sys.stdout.write(manifest)
+            else:
+                write_task_manifest_file(root, args.output, manifest)
             return 0
         if args.command == "context":
             context = build_context(root)

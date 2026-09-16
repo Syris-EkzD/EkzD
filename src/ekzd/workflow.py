@@ -22,6 +22,8 @@ from .core import (
     start_session,
     write_state,
 )
+from .identity import BuildIdentityUnavailable, runtime_identity
+from .task import render_task_manifest_v2
 
 
 def _origin_remote(root: Path) -> str | None:
@@ -267,6 +269,51 @@ def build_implementation_prompt(root: Path) -> str:
     return "\n".join(lines)
 
 
+def build_worker_task_manifest(root: Path) -> str:
+    state = _active_state(root)
+    enforce_session_contract(root, state)
+    start_head = _session_start_head(state)
+    enforce_protected_session_history(root, start_head)
+    config = load_committed_config(root, ready=True)
+
+    start_git = state.get("start_git")
+    if not isinstance(start_git, dict):
+        raise HarnessError("Active session is missing its starting Git state.")
+    start_status = start_git.get("status")
+    if not isinstance(start_status, list):
+        raise HarnessError("Active session is missing its starting working-tree state.")
+    if start_status:
+        raise HarnessError(
+            "This session started from a dirty working tree and cannot export a portable worker task. Abort it, restore or commit the baseline, then start a fresh session."
+        )
+
+    objective = state.get("objective")
+    if not isinstance(objective, str) or not objective.strip():
+        raise HarnessError("Active session is missing its objective.")
+
+    workflow = _workflow_metadata(state)
+    repository = workflow["repository"]
+    scope = config.get("scope", {})
+    acceptance = config.get("acceptance", {}).get("criteria", [])
+    try:
+        identity = runtime_identity()
+    except BuildIdentityUnavailable as exc:
+        raise HarnessError(f"Exact EkzD runtime build identity is unavailable; cannot export worker task: {exc}") from exc
+
+    return render_task_manifest_v2(
+        objective=objective,
+        baseline=start_head,
+        implementation_branch=workflow["implementation_branch"],
+        max_commits=config["session"]["max_commits"],
+        include=scope.get("include", []),
+        exclude=scope.get("exclude", []),
+        acceptance_criteria=acceptance,
+        repository=repository["identifier"] if repository["origin_available"] else None,
+        ekzd_version=identity["version"],
+        ekzd_build_sha256=identity["build_sha256"],
+    )
+
+
 def _blocked_status(
     *,
     state: dict[str, Any],
@@ -362,7 +409,7 @@ def build_workflow_status(root: Path) -> dict[str, Any]:
     elif changed_since_start:
         next_action = "When the implementation is ready, run `ekzd verify`."
     else:
-        next_action = "Generate the frozen implementation handoff with `ekzd prompt`."
+        next_action = "Generate the semantic implementation handoff with `ekzd prompt` and the schema-v2 worker task with `ekzd task`."
 
     return {
         "session_status": "active",
