@@ -81,7 +81,7 @@ class CliPresentationTests(unittest.TestCase):
         stderr = io.StringIO()
         with (
             mock.patch.object(cli, "find_root") as find_root,
-            mock.patch.object(cli, "runtime_identity", return_value={"version": "0.2.0", "build_sha256": "a" * 64}),
+            mock.patch.object(cli, "runtime_identity", return_value={"version": "0.3.0", "build_sha256": "a" * 64}),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
@@ -89,7 +89,7 @@ class CliPresentationTests(unittest.TestCase):
 
         self.assertEqual(0, code)
         find_root.assert_not_called()
-        self.assertEqual(f"EkzD 0.2.0 {'a' * 64}\n", stdout.getvalue())
+        self.assertEqual(f"EkzD 0.3.0 {'a' * 64}\n", stdout.getvalue())
         self.assertEqual("", stderr.getvalue())
 
     def test_version_fails_closed_when_exact_identity_is_unavailable(self) -> None:
@@ -121,13 +121,13 @@ class CliPresentationTests(unittest.TestCase):
                 capture_output=True,
             )
         self.assertEqual(0, process.returncode, process.stderr)
-        self.assertRegex(process.stdout, r"^EkzD 0\.2\.0 [0-9a-f]{64}\n$")
+        self.assertRegex(process.stdout, r"^EkzD 0\.3\.0 [0-9a-f]{64}\n$")
         self.assertEqual("", process.stderr)
 
     def test_help_lists_retained_commands_and_omits_handoff_notes_command(self) -> None:
         argument_parser = cli.parser()
         help_text = argument_parser.format_help()
-        for command in ("init", "start", "status", "prompt", "context", "verify", "check", "abort", "finish"):
+        for command in ("init", "start", "status", "prompt", "task", "context", "verify", "check", "abort", "finish"):
             self.assertIn(command, help_text)
         self.assertIn("--version", help_text)
 
@@ -145,6 +145,13 @@ class CliPresentationTests(unittest.TestCase):
         self.assertIn("--task", stdout.getvalue())
         self.assertIn("--final", stdout.getvalue())
         self.assertIn("--json", stdout.getvalue())
+
+    def test_task_help_remains_available(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            cli.main(["task", "--help"])
+        self.assertEqual(0, raised.exception.code)
+        self.assertIn("--output", stdout.getvalue())
 
     def test_prompt_remains_exact_plain_contract_output(self) -> None:
         contract = "Repository: github.com/example/demo\nObjective\n\nDo the thing.\n"
@@ -325,7 +332,7 @@ class CliPresentationTests(unittest.TestCase):
         self.assertFalse(payload["ready"])
         self.assertEqual("worker-check", payload["checks"][0]["name"])
         self.assertEqual("UNAVAILABLE", payload["checks"][0]["status"])
-        self.assertEqual("0.2.0", payload["ekzd"]["version"])
+        self.assertEqual("0.3.0", payload["ekzd"]["version"])
         self.assertRegex(payload["ekzd"]["build_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual("", stderr.getvalue())
 
