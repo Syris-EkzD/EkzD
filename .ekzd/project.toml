@@ -17,6 +17,7 @@ paths = [
   "tests/test_cli.py",
   "tests/test_task_manifest.py",
   "tests/test_workflow_ux.py",
+  "tests/test_identity.py",
 ]
 
 [scope]
@@ -31,6 +32,7 @@ include = [
   "tests/test_task_export.py",
   "tests/test_task_manifest.py",
   "tests/test_workflow_ux.py",
+  "tests/test_identity.py",
 ]
 
 exclude = [
@@ -41,7 +43,6 @@ exclude = [
   "src/ekzd/worker.py",
   "src/ekzd/ui.py",
   "tests/test_core.py",
-  "tests/test_identity.py",
   "tests/test_ui.py",
   "tests/test_worker_check.py",
   "tests/test_verification_side_effects.py",
@@ -80,6 +81,7 @@ constraints = [
   "Use only the Python standard library and existing project tooling.",
   "Task export must be read-only with respect to the repository and active maintainer session; apart from an explicitly requested external output file, it must not modify `.ekzd/session.json`, verification state, Git state, project files, or any repository content.",
   "On any export failure, stdout mode must emit no manifest bytes and file-output mode must not create, truncate, replace, or partially update the requested destination.",
+  "Changes to `tests/test_identity.py` are limited to updating expectations required by the semantic-version bump; runtime build identity, fingerprint construction, normalization, and fail-closed behavior must remain unchanged.",
 ]
 
 [authority]
@@ -92,6 +94,7 @@ may = [
   "Add `tests/test_task_export.py` and focused export regressions.",
   "Update existing CLI, task-manifest, and workflow tests for the new explicit command and workflow guidance.",
   "Update README.md and VERIFICATION.md to document the semantic prompt plus machine task-manifest handoff workflow.",
+  "Update only the semantic-version expectation in `tests/test_identity.py` as required by the 0.3.0 version bump, without changing runtime identity or fingerprint semantics.",
 ]
 
 requires_approval = [
@@ -116,7 +119,6 @@ may_not = [
   "Modify `src/ekzd/worker.py`.",
   "Modify `src/ekzd/ui.py`.",
   "Modify `tests/test_core.py`.",
-  "Modify `tests/test_identity.py`.",
   "Modify `tests/test_ui.py`.",
   "Modify `tests/test_worker_check.py`.",
   "Modify `tests/test_verification_side_effects.py`.",
@@ -159,6 +161,7 @@ criteria = [
   "All configured verification passes.",
   "`ekzd task` does not mutate the active session, verification state, Git state, or repository contents.",
   "Any export failure leaves stdout free of partial manifest content and leaves the requested file destination unchanged or absent.",
+  "Existing runtime build-identity tests remain unchanged in behavior apart from expecting EkzD semantic version 0.3.0.",
 ]
 
 [verification]
