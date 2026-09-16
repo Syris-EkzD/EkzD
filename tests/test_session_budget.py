@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, load_config, start_session, verify_session
+from ekzd.core import HarnessError, load_config, verify_session
+from ekzd.workflow import start_reproducible_session
 
 
 CONFIG = """schema_version = 1
@@ -66,7 +67,8 @@ class SessionBudgetTests(unittest.TestCase):
         subprocess.run(["git", "commit", "-qm", f"change app {value}"], cwd=self.root, check=True)
 
     def test_explicit_smaller_budget_blocks_fourth_session_commit(self) -> None:
-        start_session(self.root, "Bounded task")
+        start_reproducible_session(self.root, "Bounded task", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
         for value in range(1, 5):
             self.commit_app_change(value)
 
@@ -85,7 +87,8 @@ class SessionBudgetTests(unittest.TestCase):
         config.write_text(CONFIG.replace("max_commits = 3", "max_commits = 20"), encoding="utf-8")
         subprocess.run(["git", "add", ".ekzd/project.toml"], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "configure session budget"], cwd=self.root, check=True)
-        start_session(self.root, "Bounded task")
+        start_reproducible_session(self.root, "Bounded task", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
         for value in range(1, 21):
             self.commit_app_change(value)
 

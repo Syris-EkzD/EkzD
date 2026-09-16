@@ -83,6 +83,13 @@ class WorkflowUxTests(unittest.TestCase):
     def _start(self, objective: str = "Change app", branch: str = "feat/demo-task") -> dict[str, object]:
         return start_reproducible_session(self.root, objective, implementation_branch=branch)
 
+    def _finish_candidate(self) -> None:
+        state = json.loads((self.root / ".ekzd/session.json").read_text())
+        self._git("checkout", "-b", state["workflow"]["implementation_branch"])
+        if self._git("status", "--porcelain"):
+            self._git("add", ".")
+            self._git("commit", "-m", "finished candidate")
+
     def _commit_app(self, value: int, message: str) -> None:
         (self.root / "src/app.py").write_text(f"VALUE = {value}\n", encoding="utf-8")
         self._git("add", "src/app.py")
@@ -287,6 +294,7 @@ class WorkflowUxTests(unittest.TestCase):
         self.assertIn("ekzd verify", changed["next"])
         self.assertFalse(changed["worktree_clean"])
 
+        self._finish_candidate()
         verification = verify_session(self.root)
         self.assertTrue(verification["passed"])
 
@@ -297,6 +305,7 @@ class WorkflowUxTests(unittest.TestCase):
     def test_finished_status_retains_inactive_status_objective_and_next_action(self) -> None:
         self._start(branch="feat/finished-task")
         (self.root / "src/app.py").write_text("VALUE = 2\n", encoding="utf-8")
+        self._finish_candidate()
         self.assertTrue(verify_session(self.root)["passed"])
         finish_session(self.root, accept=True)
 
@@ -321,6 +330,7 @@ class WorkflowUxTests(unittest.TestCase):
     def test_status_marks_successful_verification_stale_after_change(self) -> None:
         self._start()
         (self.root / "src/app.py").write_text("VALUE = 2\n", encoding="utf-8")
+        self._finish_candidate()
         self.assertTrue(verify_session(self.root)["passed"])
 
         (self.root / "src/app.py").write_text("VALUE = 3\n", encoding="utf-8")
@@ -329,10 +339,11 @@ class WorkflowUxTests(unittest.TestCase):
         self.assertEqual("stale", status["verification"])
         self.assertIn("rerun `ekzd verify`", status["next"])
 
-    def test_status_detects_same_git_status_with_changed_untracked_contents(self) -> None:
+    def test_status_detects_changed_contents_after_verified_commit(self) -> None:
         self._start(objective="Add helper")
         helper = self.root / "src/helper.py"
         helper.write_text("VALUE = 1\n", encoding="utf-8")
+        self._finish_candidate()
         self.assertTrue(verify_session(self.root)["passed"])
 
         before = build_workflow_status(self.root)
@@ -347,6 +358,7 @@ class WorkflowUxTests(unittest.TestCase):
     def test_status_reports_failed_verification(self) -> None:
         self._replace_config("print('ok')", "raise SystemExit(7)")
         self._start()
+        self._finish_candidate()
         verification = verify_session(self.root)
         self.assertFalse(verification["passed"])
 

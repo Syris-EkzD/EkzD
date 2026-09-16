@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ekzd.core import HarnessError, load_config, start_session, verify_session
+from ekzd.core import HarnessError, load_config, verify_session
+from ekzd.workflow import start_reproducible_session
 
 
 def config_text(
@@ -79,7 +80,8 @@ class MergeHardeningTests(unittest.TestCase):
         (secret / "a.txt").write_text("secret\n", encoding="utf-8")
         self.write_config(config_text(include=["allowed/"]))
         self.commit_all()
-        start_session(self.root, "Move allowed file")
+        start_reproducible_session(self.root, "Move allowed file", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
 
         (self.root / "allowed").mkdir()
         subprocess.run(["git", "mv", "secret/a.txt", "allowed/a.txt"], cwd=self.root, check=True)
@@ -94,7 +96,8 @@ class MergeHardeningTests(unittest.TestCase):
         (secret / "a.txt").write_text("secret\n", encoding="utf-8")
         self.write_config(config_text(include=["allowed/"]))
         self.commit_all()
-        start_session(self.root, "Move allowed file")
+        start_reproducible_session(self.root, "Move allowed file", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
 
         (self.root / "allowed").mkdir()
         subprocess.run(["git", "mv", "secret/a.txt", "allowed/a.txt"], cwd=self.root, check=True)
@@ -109,7 +112,8 @@ class MergeHardeningTests(unittest.TestCase):
         unusual.write_text("one\n", encoding="utf-8")
         self.write_config(config_text(include=["*"], exclude=["secret/"]))
         self.commit_all()
-        start_session(self.root, "Touch one file")
+        start_reproducible_session(self.root, "Touch one file", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
         unusual.write_text("two\n", encoding="utf-8")
 
         with self.assertRaisesRegex(HarnessError, "matches scope.exclude"):
@@ -130,7 +134,8 @@ class MergeHardeningTests(unittest.TestCase):
         ]
         self.write_config(config_text(include=["src/"], max_commits=1, command=command))
         self.commit_all()
-        start_session(self.root, "Bounded change")
+        start_reproducible_session(self.root, "Bounded change", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
         app.write_text("VALUE = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "src/app.py"], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "user commit"], cwd=self.root, check=True)
@@ -147,7 +152,8 @@ class MergeHardeningTests(unittest.TestCase):
         ]
         self.write_config(config_text(include=["*"], command=command))
         self.commit_all()
-        start_session(self.root, "Keep contract immutable")
+        start_reproducible_session(self.root, "Keep contract immutable", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
 
         with self.assertRaisesRegex(HarnessError, "must remain clean"):
             verify_session(self.root)
@@ -166,7 +172,8 @@ class MergeHardeningTests(unittest.TestCase):
         ]
         self.write_config(config_text(include=["README.md"], command=command))
         self.commit_all()
-        start_session(self.root, "Protect local session contract")
+        start_reproducible_session(self.root, "Protect local session contract", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
 
         with self.assertRaisesRegex(HarnessError, "session state changed during verification"):
             verify_session(self.root)
@@ -174,7 +181,8 @@ class MergeHardeningTests(unittest.TestCase):
     def test_tracked_session_state_is_rejected(self) -> None:
         self.write_config(config_text(include=["README.md"]))
         self.commit_all()
-        start_session(self.root, "Keep state local")
+        start_reproducible_session(self.root, "Keep state local", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
         subprocess.run(["git", "add", "-f", ".ekzd/session.json"], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "track session state"], cwd=self.root, check=True)
 
@@ -184,7 +192,8 @@ class MergeHardeningTests(unittest.TestCase):
     def test_missing_verification_executable_is_a_failed_step(self) -> None:
         self.write_config(config_text(include=["README.md"], command=["ekzd-command-that-does-not-exist-7f42c1"]))
         self.commit_all()
-        start_session(self.root, "Run configured check")
+        start_reproducible_session(self.root, "Run configured check", implementation_branch="feat/task")
+        subprocess.run(["git", "checkout", "-qb", "feat/task"], cwd=self.root, check=True)
 
         verification = verify_session(self.root)
 

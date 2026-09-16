@@ -239,6 +239,12 @@ The ceiling is not a target. Implementation work should prefer small, logically 
 
 ## Acceptance model
 
+Phase 1 final verification (`ekzd verify` and worker `ekzd check --final`) requires a clean, fully committed candidate on the declared implementation branch. Detached HEAD, unresolved conflicts, and in-progress Git operations are rejected. Use worker `ekzd check` for dirty development checks. Legacy sessions without a declared branch must be restarted; verification evidence from before candidate binding must be regenerated.
+
+Candidate binding hashes raw tracked and non-ignored untracked file contents, Git executable modes, symlink values, HEAD, branch, and index identities. It does not use textconv or external diff output. Raw working files must match their index blobs for final readiness; a checkout transformation such as LF-to-CRLF conversion is therefore not a clean final candidate even if ordinary Git status hides it. Verification captures the candidate before commands, checks it before and after each command and at completion, and rejects observed mutation without restoring it or adopting it as verified state.
+
+Submodules (clean or dirty), shallow repositories, sparse checkout, hidden index flags, active tracked content filters, replacement refs/grafts, nested repositories encountered as candidate paths, and special candidate files are unsupported. Complete Git operations and use a conventional checkout before evaluating. Snapshots assume a quiescent checkout; they are not a sandbox or an atomic filesystem transaction. Ignored files and external symlink-target contents are not bound. A command checking an ignored file does not add that file to the fingerprint.
+
 EkzD treats verification and acceptance as different stages.
 
 `ekzd verify`:
@@ -256,7 +262,7 @@ EkzD treats verification and acceptance as different stages.
 
 `ekzd finish --accept` succeeds only when:
 
-- verification passed;
+- verification passed for the same clean, committed candidate on the declared implementation branch;
 - `.ekzd/project.toml` remains committed, clean, regular, and identical to the active-session and verified committed configuration;
 - the local session state remains untracked;
 - unsupported Git visibility features such as hidden index flags or tracked-file filters are absent;
@@ -270,7 +276,7 @@ EkzD treats verification and acceptance as different stages.
 
 Acceptance requires the current supported Git-visible state to exactly match the verified state. If the current state differs, verification must be rerun before acceptance can succeed. `ekzd status` mirrors that rule by reporting the previous verification as `stale` rather than `passed` when the current exact state no longer matches.
 
-The exact-state fingerprint covers tracked, staged, unstaged, and untracked state under V1's supported conventional Git checkout model. Git-ignored files are outside V1's fingerprint unless a configured verification command explicitly checks them. Tracked files using content filters are rejected rather than fingerprinted through a potentially transformed Git view. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
+The exact-state fingerprint covers tracked, staged, unstaged, and untracked state under V1's supported conventional Git checkout model. Git-ignored files are outside the fingerprint even when verification commands inspect them. Tracked files using content filters are rejected rather than fingerprinted through a potentially transformed Git view. `.ekzd/session.json` is handled separately as trusted local harness metadata: it must stay untracked, must not change while verification commands run, and must never enter active-session Git history. `.ekzd/project.toml` is separately required to stay committed and clean, its active contract is sourced from the committed `HEAD` blob, and it is protected from active-session commits.
 
 ## Context, prompt, task, and status
 
@@ -286,7 +292,7 @@ The generated instructions are environment-agnostic: a development environment w
 
 `ekzd context` renders a human-friendly view of the current objective, session policy, Git state, scope, authority, acceptance criteria, and verification plan. `--json` provides the same committed project contract as structured data for tools that need it. When a session is active, EkzD refuses to render trusted contract outputs if the canonical `.ekzd/project.toml` is dirty, staged, uncommitted, historically touched during the session, or no longer matches the session-start committed digest. The project contract itself is parsed from `HEAD:.ekzd/project.toml`, keeping prompt generation, task export, verification, and acceptance bound to the same committed definition. Portable V1.1 workflow metadata such as the declared task branch and frozen repository identifier remains local in `.ekzd/session.json`.
 
-The `sources.paths` entries define the project material an AI or developer is expected to consult. EkzD exposes those paths as part of the semantic prompt contract; V1 does not semantically read or enforce their prose by itself, and task export does not pretend they are worker-enforced manifest authority.
+The `sources.paths` entries identify regular files to consult at the frozen baseline. Active operations validate them against that commit, so an authorized implementation may delete or rename them; they are not preservation rules. EkzD exposes those paths as part of the semantic prompt contract; V1 does not semantically read or enforce their prose by itself, and task export does not pretend they are worker-enforced manifest authority.
 
 Likewise, free-text authority and constraint entries are contextual instructions for the AI or human operator. EkzD mechanically enforces what it can measure: canonical configuration integrity, protected harness-history integrity, local session-state integrity, supported Git-visible scope, commit budget, verification results, exact-state binding, and explicit acceptance. Those prose entries remain in `ekzd prompt`; they are intentionally absent from the worker task manifest because the current task schema does not mechanically enforce them.
 
