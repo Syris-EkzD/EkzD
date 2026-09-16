@@ -24,6 +24,7 @@ from .core import (
     session_history_paths,
     validate_config,
 )
+from .evaluation import EvaluationResult, StepEvidence, VerificationStep, evaluate_candidate
 from .identity import BuildIdentityUnavailable, runtime_identity
 from .task import TaskManifest, TaskVerificationStep, load_task_manifest, task_identity
 from .workflow import _origin_remote, _sanitize_repository_identifier
@@ -115,69 +116,38 @@ def _safe_repository_identifier(value: str) -> str:
         raise HarnessError("Repository identity cannot be normalized safely.") from exc
 
 
-def _run_step(root: Path, prefix: str, step: dict[str, Any] | TaskVerificationStep) -> tuple[dict[str, Any], bool]:
+def _evaluation_step(prefix: str, step: dict[str, Any] | TaskVerificationStep) -> VerificationStep:
     if isinstance(step, TaskVerificationStep):
-        name = step.name
-        command = list(step.command)
-        cwd = step.cwd
-        timeout = step.timeout_seconds
-    else:
-        name = str(step["name"])
-        command = list(step["command"])
-        cwd = str(step.get("cwd", "."))
-        timeout = int(step.get("timeout_seconds", 600))
-    check_name = f"{prefix}:{name}"
-    try:
-        resolved_root = root.resolve()
-        command_cwd = (root / cwd).resolve()
-    except OSError:
-        return check_result(check_name, "UNAVAILABLE", f"Configured working directory is unusable: {cwd}"), False
-    if resolved_root not in (command_cwd, *command_cwd.parents) or not command_cwd.is_dir():
-        return check_result(check_name, "UNAVAILABLE", f"Configured working directory must resolve inside the project: {cwd}"), False
-
-    try:
-        before_visible = capture_candidate(root)
-    except (HarnessError, OSError) as exc:
-        return check_result(check_name, "UNAVAILABLE", f"Unable to capture pre-check Git state: {exc}"), False
-
-    try:
-        process = subprocess.run(
-            command,
-            cwd=command_cwd,
-            capture_output=True,
-            timeout=timeout,
+        return VerificationStep(
+            name=step.name,
+            command=tuple(step.command),
+            cwd=step.cwd,
+            timeout_seconds=step.timeout_seconds,
+            prefix=prefix,
         )
-        status = "PASS" if process.returncode == 0 else "FAIL"
-        message = "Verification command passed." if process.returncode == 0 else f"Verification command exited with status {process.returncode}."
-        details: dict[str, Any] = {"command": command, "cwd": cwd, "returncode": process.returncode}
-        if process.stdout:
-            details["stdout"] = process.stdout.decode("utf-8", errors="replace")
-        if process.stderr:
-            details["stderr"] = process.stderr.decode("utf-8", errors="replace")
-        item = check_result(check_name, status, message, **details)
-    except FileNotFoundError:
-        item = check_result(check_name, "UNAVAILABLE", f"Required executable is unavailable: {command[0]}", command=command, cwd=cwd)
-    except subprocess.TimeoutExpired as exc:
-        item = check_result(check_name, "FAIL", f"Verification command timed out after {timeout} seconds.", command=command, cwd=cwd)
-        if exc.stdout:
-            output = exc.stdout if isinstance(exc.stdout, bytes) else str(exc.stdout).encode("utf-8", errors="replace")
-            item.setdefault("details", {})["stdout"] = output.decode("utf-8", errors="replace")
-        if exc.stderr:
-            output = exc.stderr if isinstance(exc.stderr, bytes) else str(exc.stderr).encode("utf-8", errors="replace")
-            item.setdefault("details", {})["stderr"] = output.decode("utf-8", errors="replace")
-    except OSError as exc:
-        item = check_result(check_name, "UNAVAILABLE", f"Unable to execute verification command: {exc}", command=command, cwd=cwd)
+    return VerificationStep(
+        name=str(step["name"]),
+        command=tuple(step["command"]),
+        cwd=str(step.get("cwd", ".")),
+        timeout_seconds=int(step.get("timeout_seconds", 600)),
+        prefix=prefix,
+    )
 
-    try:
-        after_visible = capture_candidate(root)
-    except (HarnessError, OSError) as exc:
-        item.setdefault("details", {})["post_check_git_error"] = str(exc)
-        return item, True
 
-    mutated = before_visible != after_visible
-    if mutated:
-        item.setdefault("details", {})["git_state_mutated"] = True
-    return item, mutated
+def _add_evaluation_step(result: dict[str, Any], evidence: StepEvidence) -> None:
+    details = evidence.details()
+    _add(result, evidence.name, evidence.status, evidence.message, **details)
+
+
+def _add_evaluation_result(result: dict[str, Any], evaluation: EvaluationResult) -> None:
+    if evaluation.candidate is not None:
+        result["git"] = evaluation.candidate.binding()
+    else:
+        for evidence in evaluation.steps:
+            _add_evaluation_step(result, evidence)
+        return
+    for evidence in evaluation.steps:
+        _add_evaluation_step(result, evidence)
 
 
 def _validate_baseline(root: Path, baseline: str) -> tuple[str, str]:
@@ -405,32 +375,18 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
         steps.extend(("project", step) for step in project_config["verification"]["steps"])
     steps.extend(("task", step) for step in task.verification_steps)
 
-    mutation_detected = False
-    for prefix, step in steps:
-        if mutation_detected:
-            name = step.name if isinstance(step, TaskVerificationStep) else str(step["name"])
-            _add(result, f"{prefix}:{name}", "UNAVAILABLE", "Not run because an earlier verification command mutated Git-visible project state.")
-            continue
+    evaluation = evaluate_candidate(
+        root,
+        (_evaluation_step(prefix, step) for prefix, step in steps),
+        mode="final" if final else "development",
+        implementation_branch=task.implementation_branch if final else None,
+    )
+    _add_evaluation_result(result, evaluation)
+    if evaluation.candidate is not None:
         try:
-            if _worktree_binding(root) != result["git"]:
-                raise HarnessError("Candidate changed between evaluation boundaries.")
-        except HarnessError as exc:
-            _add(result, "state-binding", "FAIL", str(exc))
-            mutation_detected = True
-            break
-        item, mutated = _run_step(root, prefix, step)
-        result["checks"].append(item)
-        if mutated:
-            mutation_detected = True
-            _add(result, f"{item['name']}:mutation", "FAIL", "Verification command changed tracked or non-ignored Git-visible project state; EkzD left the mutation untouched.")
-
-    try:
-        post = _worktree_binding(root)
-        if post != result["git"]:
-            _add(result, "state-binding", "FAIL", "Candidate changed during verification; result remains bound to the initial state.")
-        elif not mutation_detected:
-            _add(result, "state-binding", "PASS", "Verification preserved the captured candidate state.")
-    except (HarnessError, OSError) as exc:
-        _add(result, "state-binding", "UNAVAILABLE", f"Unable to bind final Git/worktree state: {exc}")
+            if capture_candidate(root) != evaluation.candidate:
+                _add(result, "state-binding", "FAIL", "Candidate changed after verification evaluation; result remains bound to the initial state.")
+        except (HarnessError, OSError) as exc:
+            _add(result, "state-binding", "UNAVAILABLE", f"Unable to bind final Git/worktree state after evaluation: {exc}")
 
     return finalize_worker_result(result)

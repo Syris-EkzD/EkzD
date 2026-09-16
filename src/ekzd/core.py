@@ -173,7 +173,18 @@ def _safe_relative_path(value: str, label: str) -> Path:
     return path
 
 
+def _reject_unknown_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise HarnessError(f"{label} contains unknown key: {unknown[0]}")
+
+
 def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, source_revision: str | None = None) -> dict[str, Any]:
+    _reject_unknown_keys(
+        data,
+        {"schema_version", "project", "sources", "scope", "authority", "session", "acceptance", "verification"},
+        "project configuration",
+    )
     schema_version = data.get("schema_version")
     if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != SCHEMA_VERSION:
         raise HarnessError(f"schema_version must be integer {SCHEMA_VERSION}.")
@@ -181,10 +192,12 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, sou
     project = data.get("project")
     if not isinstance(project, dict) or not isinstance(project.get("name"), str) or not project["name"].strip():
         raise HarnessError("project.name must be a non-empty string.")
+    _reject_unknown_keys(project, {"name"}, "project")
 
     sources = data.get("sources", {})
     if not isinstance(sources, dict):
         raise HarnessError("sources must be a table.")
+    _reject_unknown_keys(sources, {"paths"}, "sources")
     source_paths = _string_list(sources.get("paths", []), "sources.paths")
     for raw in source_paths:
         path = _safe_relative_path(raw, "source path")
@@ -201,6 +214,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, sou
     scope = data.get("scope", {})
     if not isinstance(scope, dict):
         raise HarnessError("scope must be a table.")
+    _reject_unknown_keys(scope, {"include", "exclude", "constraints"}, "scope")
     _string_list(scope.get("include", []), "scope.include", require_nonempty=ready)
     _string_list(scope.get("exclude", []), "scope.exclude")
     _string_list(scope.get("constraints", []), "scope.constraints")
@@ -208,6 +222,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, sou
     authority = data.get("authority", {})
     if not isinstance(authority, dict):
         raise HarnessError("authority must be a table.")
+    _reject_unknown_keys(authority, {"may", "requires_approval", "may_not"}, "authority")
     _string_list(authority.get("may", []), "authority.may")
     _string_list(authority.get("requires_approval", []), "authority.requires_approval")
     _string_list(authority.get("may_not", []), "authority.may_not")
@@ -215,6 +230,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, sou
     session = data.get("session", {})
     if not isinstance(session, dict):
         raise HarnessError("session must be a table.")
+    _reject_unknown_keys(session, {"max_commits"}, "session")
     max_commits = session.get("max_commits", DEFAULT_MAX_COMMITS)
     if (
         isinstance(max_commits, bool)
@@ -231,11 +247,13 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, sou
     acceptance = data.get("acceptance", {})
     if not isinstance(acceptance, dict):
         raise HarnessError("acceptance must be a table.")
+    _reject_unknown_keys(acceptance, {"criteria"}, "acceptance")
     _string_list(acceptance.get("criteria", []), "acceptance.criteria", require_nonempty=ready)
 
     verification = data.get("verification", {})
     if not isinstance(verification, dict):
         raise HarnessError("verification must be a table.")
+    _reject_unknown_keys(verification, {"steps"}, "verification")
     steps = verification.get("steps", [])
     if not isinstance(steps, list):
         raise HarnessError("verification.steps must be a list.")
@@ -244,6 +262,7 @@ def validate_config(data: dict[str, Any], root: Path, *, ready: bool = True, sou
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             raise HarnessError(f"verification.steps[{index}] must be a table.")
+        _reject_unknown_keys(step, {"name", "command", "cwd", "timeout_seconds"}, f"verification.steps[{index}]")
         if not isinstance(step.get("name"), str) or not step["name"].strip():
             raise HarnessError(f"verification.steps[{index}].name must be non-empty.")
         command = step.get("command")
@@ -563,6 +582,7 @@ def implementation_branch(state: dict[str, Any]) -> str:
 
 def verify_session(root: Path) -> dict[str, Any]:
     from .candidate import capture_candidate, require_final
+    from .evaluation import VerificationStep, evaluate_candidate
 
     state = _active_state(root)
     initial_state_digest = session_state_digest(root)
@@ -581,56 +601,24 @@ def verify_session(root: Path) -> dict[str, Any]:
     state["acceptance"] = None
     write_state(root, state)
     state_digest = session_state_digest(root)
-    results: list[dict[str, Any]] = []
-    for step in config["verification"]["steps"]:
-        cwd = (root / step.get("cwd", ".")).resolve()
-        if root not in (cwd, *cwd.parents) or not cwd.is_dir():
-            raise HarnessError(f"Verification cwd is invalid: {step.get('cwd', '.')}")
-        if capture_candidate(root) != candidate:
-            raise HarnessError("Candidate changed before a verification command; rerun verification.")
-        try:
-            process = subprocess.run(step["command"], cwd=cwd, text=True, capture_output=True, timeout=step.get("timeout_seconds", 600))
-            result = {
-                "name": step["name"],
-                "command": step["command"],
-                "cwd": str(cwd.relative_to(root)),
-                "exit_code": process.returncode,
-                "stdout": process.stdout[-4000:],
-                "stderr": process.stderr[-4000:],
-                "passed": process.returncode == 0,
-            }
-        except subprocess.TimeoutExpired as exc:
-            result = {
-                "name": step["name"],
-                "command": step["command"],
-                "cwd": str(cwd.relative_to(root)),
-                "exit_code": None,
-                "stdout": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
-                "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
-                "passed": False,
-                "timed_out": True,
-            }
-        except OSError as exc:
-            result = {
-                "name": step["name"],
-                "command": step["command"],
-                "cwd": str(cwd.relative_to(root)),
-                "exit_code": None,
-                "stdout": "",
-                "stderr": str(exc)[-4000:],
-                "passed": False,
-                "launch_error": True,
-            }
-        try:
-            if capture_candidate(root) != candidate:
-                result["passed"] = False
-                result["candidate_error"] = "Verification command changed candidate state; mutation left untouched."
-        except HarnessError as exc:
-            result["passed"] = False
-            result["candidate_error"] = f"Candidate trust lost after verification command: {exc}"
-        results.append(result)
-        if not result["passed"]:
-            break
+    steps = tuple(
+        VerificationStep(
+            name=str(step["name"]),
+            command=tuple(step["command"]),
+            cwd=str(step.get("cwd", ".")),
+            timeout_seconds=int(step.get("timeout_seconds", 600)),
+        )
+        for step in config["verification"]["steps"]
+    )
+    evaluation = evaluate_candidate(
+        root,
+        steps,
+        mode="final",
+        implementation_branch=implementation_branch(state),
+    )
+    if evaluation.candidate != candidate:
+        raise HarnessError("Candidate changed before verification evaluation could begin.")
+    results = [step.maintainer_dict() for step in evaluation.steps if step.name != "state-binding" or not step.passed]
 
     current_state = _active_state(root)
     if current_state != state or session_state_digest(root) != state_digest:
@@ -642,7 +630,9 @@ def verify_session(root: Path) -> dict[str, Any]:
     paths = enforce_scope(root, config, start_head=start_head)
     if capture_candidate(root) != candidate:
         raise HarnessError("Candidate changed during verification; mutation left untouched and no success recorded.")
-    passed = len(results) == len(config["verification"]["steps"]) and all(item["passed"] for item in results)
+    if evaluation.final_binding_error is not None:
+        raise HarnessError(evaluation.final_binding_error)
+    passed = evaluation.passed
     verification = {
         "verified_at": utc_now(),
         "passed": passed,

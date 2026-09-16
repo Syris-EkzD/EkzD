@@ -294,8 +294,9 @@ class WorkerCheckTests(unittest.TestCase):
         ])
         result = run_worker_check(self.root, self.task_path)
         checks = self._checks(result)
-        self.assertEqual("FAIL", checks["task:mutate:mutation"]["status"])
-        self.assertEqual("UNAVAILABLE", checks["task:later"]["status"])
+        self.assertEqual("FAIL", checks["task:mutate"]["status"])
+        self.assertIn("candidate_error", checks["task:mutate"]["details"])
+        self.assertNotIn("task:later", checks)
         self.assertEqual("mutated\n", (self.root / "allowed.txt").read_text(encoding="utf-8"))
 
     def test_repository_identity_mismatch_is_safe_and_blocks(self) -> None:

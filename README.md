@@ -162,9 +162,9 @@ Before handoff, run final checking:
 ekzd check --final --task /path/to/task.toml
 ```
 
-Final checking requires a clean worktree and binds a successful result to the exact final HEAD. Both modes verify baseline ancestry, the declared implementation branch, the commit ceiling, protected EkzD paths and supported Git visibility, task scope, optional repository identity, and all baseline project plus additive task verification commands. Verification commands are executed directly as argv arrays, never through a shell. EkzD does not repair, format, stage, commit, reset, restore, or otherwise rewrite the candidate; if a configured verifier changes Git-visible project state, the check fails and leaves that mutation visible for inspection.
+Final checking requires a clean worktree and binds a successful result to the exact final HEAD. Both modes verify baseline ancestry, the declared implementation branch, the commit ceiling, protected EkzD paths and supported Git visibility, task scope, optional repository identity, and all baseline project plus additive task verification commands. Worker checking and maintainer verification use the same command evaluator and candidate-mutation handling. Verification commands are executed directly as argv arrays, never through a shell. On Linux each command runs in its own process group; on timeout or keyboard interruption EkzD cleans up the owned group before recapturing candidate state. This does not contain deliberately daemonized descendants that escape the process group. EkzD does not repair, format, stage, commit, reset, restore, or otherwise rewrite the candidate; if a configured verifier changes Git-visible project state, the check fails and leaves that mutation visible for inspection.
 
-Each individual result uses one of four states: `PASS` means the check ran and succeeded; `FAIL` means it ran and found a blocking violation; `UNAVAILABLE` means a required check could not be evaluated or executed and is blocking; `WARN` is a non-blocking observation. Overall readiness succeeds only when no required result is `FAIL` or `UNAVAILABLE`. Ordinary independent failures are aggregated where safe so one failed command does not hide unrelated results.
+Each individual result uses one of four states: `PASS` means the check ran and succeeded; `FAIL` means it ran and found a blocking violation; `UNAVAILABLE` means a required check could not be evaluated or executed and is blocking; `WARN` is a non-blocking observation. Verifier stdout and stderr are retained with a fixed bound, invalid UTF-8 is decoded with replacement characters, and truncated output is marked in structured results. Overall readiness succeeds only when no required result is `FAIL` or `UNAVAILABLE`. Ordinary independent failures are aggregated where safe so one failed command does not hide unrelated results.
 
 If an active session cannot or should not be accepted, close it without acceptance:
 
@@ -219,7 +219,7 @@ cwd = "."
 timeout_seconds = 600
 ```
 
-Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
+Configuration is intentionally explicit. Empty `scope.include`, empty acceptance criteria, or an empty verification plan prevent a session from starting. Unknown keys in supported configuration and task-manifest tables are rejected instead of ignored, so misspelled policy fields do not silently weaken the contract. A deliberately repo-wide scope must still be explicit, for example `include = ["*"]`.
 
 `.ekzd/project.toml` is the canonical committed project contract. `ekzd start` refuses to begin a CLI session unless that file already exists in `HEAD` as a regular tracked file, has no staged or unstaged changes, and the repository working tree is otherwise clean. The clean-start rule gives a separate implementation environment a reproducible commit baseline instead of depending on local-only edits that cannot be represented by the recorded HEAD.
 

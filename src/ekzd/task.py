@@ -59,11 +59,18 @@ def _safe_cwd(value: Any, label: str) -> str:
     return value
 
 
+def _reject_unknown_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise HarnessError(f"{label} contains unknown key: {unknown[0]}")
+
+
 def _verification_steps(value: Any) -> tuple[TaskVerificationStep, ...]:
     if value is None:
         return ()
     if not isinstance(value, dict):
         raise HarnessError("verification must be a table.")
+    _reject_unknown_keys(value, {"steps"}, "verification")
     steps = value.get("steps", [])
     if not isinstance(steps, list):
         raise HarnessError("verification.steps must be a list.")
@@ -71,6 +78,7 @@ def _verification_steps(value: Any) -> tuple[TaskVerificationStep, ...]:
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             raise HarnessError(f"verification.steps[{index}] must be a table.")
+        _reject_unknown_keys(step, {"name", "command", "cwd", "timeout_seconds"}, f"verification.steps[{index}]")
         name = step.get("name")
         if not isinstance(name, str) or not name.strip():
             raise HarnessError(f"verification.steps[{index}].name must be non-empty.")
@@ -91,6 +99,7 @@ def _schema_v2_identity(data: dict[str, Any]) -> tuple[str, str]:
     ekzd = data.get("ekzd")
     if not isinstance(ekzd, dict):
         raise HarnessError("task schema version 2 requires an [ekzd] table.")
+    _reject_unknown_keys(ekzd, {"version", "build_sha256"}, "task ekzd")
 
     version = ekzd.get("version")
     if not isinstance(version, str) or not version.strip():
@@ -252,6 +261,22 @@ def load_task_manifest(path: Path) -> TaskManifest:
         raise HarnessError(f"Unable to parse task manifest {resolved}: {exc}") from exc
     if not isinstance(data, dict):
         raise HarnessError("Task manifest must contain a TOML document.")
+    _reject_unknown_keys(
+        data,
+        {
+            "schema_version",
+            "objective",
+            "baseline",
+            "implementation_branch",
+            "max_commits",
+            "repository",
+            "ekzd",
+            "scope",
+            "acceptance",
+            "verification",
+        },
+        "task manifest",
+    )
 
     schema_version = data.get("schema_version")
     if (
@@ -282,12 +307,14 @@ def load_task_manifest(path: Path) -> TaskManifest:
     scope = data.get("scope")
     if not isinstance(scope, dict):
         raise HarnessError("task scope must be a table.")
+    _reject_unknown_keys(scope, {"include", "exclude"}, "task scope")
     include = _string_list(scope.get("include", []), "task scope.include", require_nonempty=True)
     exclude = _string_list(scope.get("exclude", []), "task scope.exclude")
 
     acceptance = data.get("acceptance")
     if not isinstance(acceptance, dict):
         raise HarnessError("task acceptance must be a table.")
+    _reject_unknown_keys(acceptance, {"criteria"}, "task acceptance")
     criteria = _string_list(
         acceptance.get("criteria", []), "task acceptance.criteria", require_nonempty=True
     )
