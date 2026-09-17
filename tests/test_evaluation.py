@@ -259,7 +259,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
         self.assertIn("process-group members", result.message)
         self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
 
-    def test_keyboard_interrupt_cleans_descendant_after_parent_exit(self) -> None:
+    def test_owned_process_group_cleanup_kills_descendant_after_parent_exit(self) -> None:
         marker = self.root / "allowed.txt"
         child = "import time; time.sleep(1.5); open('allowed.txt','w').write('late mutation\\n')"
         parent = (
@@ -268,26 +268,49 @@ class EvaluationPhase2Tests(unittest.TestCase):
             "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
         )
         self.freeze([])
-        calls = 0
-        original_sleep = evaluation.time.sleep
+        process = subprocess.Popen(
+            [sys.executable, "-c", parent],
+            cwd=self.root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        pgid = process.pid
+        process.wait(timeout=2)
+        self.assertTrue(evaluation._process_group_active(pgid))
 
-        def interrupt_while_waiting(seconds: float) -> None:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                raise KeyboardInterrupt
-            original_sleep(seconds)
+        evaluation._cleanup_owned_process_group(process, pgid)
+        time.sleep(1.8)
 
-        with mock.patch.object(evaluation.time, "sleep", side_effect=interrupt_while_waiting):
+        self.assertFalse(evaluation._process_group_active(pgid))
+        self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
+
+    def test_keyboard_interrupt_always_invokes_owned_group_cleanup(self) -> None:
+        self.freeze([])
+        process = subprocess.Popen(
+            [sys.executable, "-c", "pass"],
+            cwd=self.root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        process.wait(timeout=2)
+        with (
+            mock.patch.object(evaluation.subprocess, "Popen", return_value=process),
+            mock.patch.object(evaluation.os, "getpgid", return_value=process.pid),
+            mock.patch.object(evaluation.os, "set_blocking"),
+            mock.patch.object(evaluation.selectors, "DefaultSelector") as selector_factory,
+            mock.patch.object(evaluation, "_cleanup_owned_process_group") as cleanup,
+        ):
+            selector = selector_factory.return_value
+            selector.get_map.side_effect = KeyboardInterrupt
             with self.assertRaises(KeyboardInterrupt):
                 run_verification_step(
                     self.root,
-                    VerificationStep("interrupted-descendant", (sys.executable, "-c", parent), timeout_seconds=5),
+                    VerificationStep("interrupted", (sys.executable, "-c", "pass"), timeout_seconds=5),
                 )
-        time.sleep(1.8)
 
-        self.assertGreaterEqual(calls, 1)
-        self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
+        cleanup.assert_called_once_with(process, process.pid)
 
     def test_closed_pipes_waits_for_process_without_timeout(self) -> None:
         self.freeze([])
