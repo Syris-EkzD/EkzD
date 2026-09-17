@@ -113,13 +113,13 @@ class CandidateStateTests(unittest.TestCase):
     def test_failed_retry_cannot_leave_prior_success_available(self) -> None:
         self.start()
         self.assertTrue(core.verify_session(self.root)['passed'])
-        original = core.subprocess.run
-        def mutate_after_check(command, *args, **kwargs):
-            result = original(command, *args, **kwargs)
-            if command[0] == 'python3':
-                (self.root / 'README.md').write_text('changed by check')
+        from ekzd import evaluation
+        original = evaluation.run_verification_step
+        def mutate_after_check(*args, **kwargs):
+            result = original(*args, **kwargs)
+            (self.root / 'README.md').write_text('changed by check')
             return result
-        with mock.patch.object(core.subprocess, 'run', side_effect=mutate_after_check):
+        with mock.patch.object(evaluation, 'run_verification_step', side_effect=mutate_after_check):
             with self.assertRaises(core.HarnessError):
                 core.verify_session(self.root)
         self.git('restore', 'README.md')
@@ -128,12 +128,12 @@ class CandidateStateTests(unittest.TestCase):
 
     def test_worker_mutation_after_step_boundary_cannot_be_rebound(self) -> None:
         self.start()
-        original = worker._run_step
+        original = worker.evaluate_candidate
         def late_change(*args, **kwargs):
             result = original(*args, **kwargs)
             (self.root / 'README.md').write_text('late change\n')
             return result
-        with mock.patch.object(worker, '_run_step', side_effect=late_change):
+        with mock.patch.object(worker, 'evaluate_candidate', side_effect=late_change):
             result = worker.run_worker_check(self.root, self.task, final=True)
         self.assertFalse(result['ready'])
         self.assertIn('Candidate changed', json.dumps(result))
