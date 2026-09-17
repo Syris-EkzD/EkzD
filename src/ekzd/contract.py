@@ -17,7 +17,7 @@ from .core import HarnessError, run_git_bytes
 
 PROJECT_VERSION = 2
 TASK_VERSION = 1
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 DEFAULT_MAX_COMMITS = 20  # A default, never a universal ceiling.
 BUILTIN_PROTECTED = [".ekzd/project.toml", ".ekzd/local/", ".ekzd/session.json"]
 LEGACY_MESSAGE = "Unsupported legacy EkzD session/task format. Remove the old local session and start a new task with the current schema."
@@ -60,12 +60,13 @@ def _version(value: Any, expected: int, label: str) -> None:
         raise HarnessError(f"Unsupported {label} version; expected integer {expected}. {LEGACY_MESSAGE}")
 
 
-def verification_steps(value: Any, *, required: bool = False) -> list[dict]:
+def verification_steps(value: Any, *, required: bool = False, label: str = "verification") -> list[dict]:
     if not isinstance(value, list) or (required and not value):
-        raise HarnessError("verification must be a non-empty array of steps." if required else "verification must be an array of steps.")
+        raise HarnessError(f"{label} must be a non-empty array of steps." if required else f"{label} must be an array of steps.")
     result = []
+    table = label
     for index, raw in enumerate(value):
-        label = f"verification[{index}]"
+        label = f"{table}[{index}]"
         step = _object(raw, {"name", "command", "cwd", "timeout_seconds"}, label)
         command = _strings(step.get("command"), f"{label}.command", required=True)
         cwd = _strings([step.get("cwd", ".")], f"{label}.cwd", paths=True)[0]
@@ -80,17 +81,18 @@ def verification_steps(value: Any, *, required: bool = False) -> list[dict]:
 def parse_project(data: Any, *, ready: bool = True) -> dict:
     if isinstance(data, dict):
         _version(data.get("schema_version"), PROJECT_VERSION, "project schema")
-    data = _object(data, {"schema_version", "name", "protected", "exclude", "guidance", "max_commits", "verification"}, "project")
+    data = _object(data, {"schema_version", "name", "protected", "exclude", "guidance", "max_commits", "verification", "readiness"}, "project")
     return {"schema_version": PROJECT_VERSION, "name": _text(data.get("name"), "project.name"),
             "protected": sorted(set(_strings(data.get("protected", []), "project.protected", paths=True))),
             "exclude": sorted(set(_strings(data.get("exclude", []), "project.exclude", paths=True))),
             "guidance": _strings(data.get("guidance", []), "project.guidance"),
             "max_commits": _positive(data.get("max_commits", DEFAULT_MAX_COMMITS), "project.max_commits"),
-            "verification": verification_steps(data.get("verification", []), required=ready)}
+            "verification": verification_steps(data.get("verification", []), required=ready),
+            "readiness": verification_steps(data.get("readiness", []), label="readiness")}
 
 
 def parse_task(data: Any) -> dict:
-    data = _object(data, {"schema_version", "objective", "branch", "include", "exclude", "sources", "acceptance", "guidance", "max_commits", "verification"}, "task")
+    data = _object(data, {"schema_version", "objective", "branch", "include", "exclude", "sources", "acceptance", "guidance", "max_commits", "verification", "readiness"}, "task")
     _version(data.get("schema_version"), TASK_VERSION, "task schema")
     result = {"schema_version": TASK_VERSION,
               "objective": _text(data.get("objective"), "task.objective"),
@@ -100,7 +102,8 @@ def parse_task(data: Any) -> dict:
               "sources": sorted(set(_strings(data.get("sources", []), "task.sources", paths=True))),
               "acceptance": _strings(data.get("acceptance"), "task.acceptance", required=True),
               "guidance": _strings(data.get("guidance", []), "task.guidance"),
-              "verification": verification_steps(data.get("verification", []))}
+              "verification": verification_steps(data.get("verification", [])),
+              "readiness": verification_steps(data.get("readiness", []), label="readiness")}
     if "max_commits" in data:
         result["max_commits"] = _positive(data["max_commits"], "task.max_commits")
     return result
@@ -134,7 +137,7 @@ def _hex(value: Any, lengths: tuple[int, ...], label: str) -> str:
 def validate_contract(data: Any) -> dict:
     if isinstance(data, dict):
         _version(data.get("contract_version"), CONTRACT_VERSION, "contract")
-    data = _object(data, {"contract_version", "baseline", "branch", "project", "objective", "scope", "sources", "acceptance", "guidance", "max_commits", "verification", "ekzd"}, "contract")
+    data = _object(data, {"contract_version", "baseline", "branch", "project", "objective", "scope", "sources", "acceptance", "guidance", "max_commits", "verification", "readiness", "ekzd"}, "contract")
     _hex(data.get("baseline"), (40, 64), "contract.baseline")
     for key in ("branch", "objective"):
         _text(data.get(key), f"contract.{key}")
@@ -153,6 +156,8 @@ def validate_contract(data: Any) -> dict:
     _positive(data.get("max_commits"), "contract.max_commits")
     if verification_steps(data.get("verification"), required=True) != data["verification"]:
         raise HarnessError("Contract verification steps must contain resolved defaults.")
+    if verification_steps(data.get("readiness"), label="readiness") != data["readiness"]:
+        raise HarnessError("Contract readiness steps must contain resolved defaults.")
     identity = _object(data.get("ekzd"), {"version", "build_sha256"}, "contract.ekzd")
     _text(identity.get("version"), "contract.ekzd.version")
     _hex(identity.get("build_sha256"), (64,), "contract.ekzd.build_sha256")
@@ -170,7 +175,8 @@ def compose_contract(project: dict, task: dict, baseline: str, identity: dict) -
         "sources": task["sources"], "acceptance": task["acceptance"],
         "guidance": project["guidance"] + task["guidance"],
         "max_commits": task.get("max_commits", project["max_commits"]),
-        "verification": project["verification"] + task["verification"], "ekzd": dict(identity),
+        "verification": project["verification"] + task["verification"],
+        "readiness": project["readiness"] + task["readiness"], "ekzd": dict(identity),
     })
 
 
@@ -192,7 +198,7 @@ def load_contract(path: Path) -> dict:
         raw = path.read_bytes()
         data = validate_contract(json.loads(raw.decode("utf-8")))
         if raw != canonical_bytes(data):
-            raise HarnessError("Frozen contract must use canonical JSON bytes; export again with `ekzd contract`.")
+            raise HarnessError("Frozen contract must use canonical JSON bytes; obtain the original handoff again.")
         return data
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise HarnessError(f"Unable to read frozen contract. {LEGACY_MESSAGE} ({exc})") from exc

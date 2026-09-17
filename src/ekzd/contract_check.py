@@ -1,6 +1,8 @@
 """Shared frozen-contract authority checks around the existing candidate evaluator."""
 from __future__ import annotations
 
+import sys
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -13,7 +15,7 @@ from .identity import BuildIdentityUnavailable, runtime_identity
 
 
 def check_contract(root: Path, contract: dict, *, final: bool, run_commands: bool = True,
-                   authority_guard: Callable[[], None] | None = None) -> dict:
+                   authority_guard: Callable[[], None] | None = None, prepare: bool = False) -> dict:
     """Bind authority prechecks and all verifiers to one captured candidate.
 
     The caller owns the contract's provenance and any persistence/file guard.
@@ -28,6 +30,10 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
 
     try:
         validate_contract(contract)
+        if sys.platform != "linux" or sys.version_info < (3, 11):
+            raise HarnessError("Worker evaluation requires Linux and Python 3.11 or newer.")
+        if shutil.which("git") is None:
+            raise HarnessError("Required executable is unavailable: git")
         identity = runtime_identity()
         result["ekzd"] = identity
         if identity != contract["ekzd"]:
@@ -51,6 +57,8 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
         validate_branch(root, contract["branch"])
         if candidate.branch != contract["branch"]:
             raise HarnessError(f"Candidate must be on declared implementation branch {contract['branch']!r}; current branch is {candidate.branch!r}.")
+        if prepare and (candidate.head != contract["baseline"] or not candidate.clean):
+            raise HarnessError("Preparation requires a clean candidate at the exact frozen baseline.")
         count = session_commit_count(root, contract["baseline"])
         if count > contract["max_commits"]:
             raise HarnessError(f"Commit budget exceeded: {count} > {contract['max_commits']}.")
@@ -76,14 +84,26 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
         add("contract-authority", "FAIL", str(exc))
         return finalize_worker_result(result)
 
-    steps = [VerificationStep(name=s["name"], command=tuple(s["command"]), cwd=s["cwd"],
-                              timeout_seconds=s["timeout_seconds"], prefix="verification")
-             for s in contract["verification"]] if run_commands else []
-    evaluation = evaluate_candidate(root, steps, mode="final" if final else "development",
-                                    implementation_branch=contract["branch"], expected_candidate=candidate,
-                                    authority_guard=authority_guard)
-    for evidence in evaluation.steps:
-        add(evidence.name, evidence.status, evidence.message, **evidence.details())
+    # Preparation runs capability probes only. Every checking attempt repeats
+    # them; success is never cached. Both passes use the same initial candidate.
+    groups = [("readiness", contract["readiness"])]
+    if not prepare:
+        groups.append(("verification", contract["verification"]))
+    if not run_commands:
+        groups = [("verification", [])]
+    for prefix, configured in groups:
+        steps = [VerificationStep(name=s["name"], command=tuple(s["command"]), cwd=s["cwd"],
+                                  timeout_seconds=s["timeout_seconds"], prefix=prefix) for s in configured]
+        evaluation = evaluate_candidate(root, steps, mode="final" if final or prepare else "development",
+                                        implementation_branch=contract["branch"], expected_candidate=candidate,
+                                        authority_guard=authority_guard)
+        for evidence in evaluation.steps:
+            status = evidence.status
+            if prefix == "readiness" and status == "FAIL" and not evidence.trust_lost:
+                status = "UNAVAILABLE"
+            add(evidence.name, status, evidence.message, **evidence.details())
+        if not evaluation.passed:
+            break
     try:
         if authority_guard:
             authority_guard()
