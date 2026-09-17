@@ -615,6 +615,7 @@ def verify_session(root: Path) -> dict[str, Any]:
         steps,
         mode="final",
         implementation_branch=implementation_branch(state),
+        expected_candidate=candidate,
     )
     if evaluation.candidate != candidate:
         raise HarnessError("Candidate changed before verification evaluation could begin.")

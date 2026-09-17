@@ -140,9 +140,9 @@ def _add_evaluation_step(result: dict[str, Any], evidence: StepEvidence) -> None
 
 
 def _add_evaluation_result(result: dict[str, Any], evaluation: EvaluationResult) -> None:
-    if evaluation.candidate is not None:
+    if evaluation.candidate is not None and not result.get("git", {}).get("head"):
         result["git"] = evaluation.candidate.binding()
-    else:
+    elif evaluation.candidate is None:
         for evidence in evaluation.steps:
             _add_evaluation_step(result, evidence)
         return
@@ -252,7 +252,8 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
 
     try:
         ensure_git_visibility_supported(root)
-        result["git"] = _worktree_binding(root)
+        worker_candidate = capture_candidate(root)
+        result["git"] = worker_candidate.binding()
         _add(result, "git-visibility", "PASS", "Git index visibility and tracked-file filters are supported.")
     except HarnessError as exc:
         message = str(exc)
@@ -380,11 +381,12 @@ def run_worker_check(root: Path, task_path: Path, *, final: bool = False) -> dic
         (_evaluation_step(prefix, step) for prefix, step in steps),
         mode="final" if final else "development",
         implementation_branch=task.implementation_branch if final else None,
+        expected_candidate=worker_candidate,
     )
     _add_evaluation_result(result, evaluation)
-    if evaluation.candidate is not None:
+    if evaluation.final_binding_error is None:
         try:
-            if capture_candidate(root) != evaluation.candidate:
+            if capture_candidate(root) != worker_candidate:
                 _add(result, "state-binding", "FAIL", "Candidate changed after verification evaluation; result remains bound to the initial state.")
         except (HarnessError, OSError) as exc:
             _add(result, "state-binding", "UNAVAILABLE", f"Unable to bind final Git/worktree state after evaluation: {exc}")

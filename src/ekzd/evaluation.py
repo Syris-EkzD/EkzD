@@ -16,6 +16,8 @@ from .core import HarnessError
 OUTPUT_LIMIT = 8192
 _OUTPUT_EDGE = OUTPUT_LIMIT // 2
 _TERMINATE_GRACE_SECONDS = 0.5
+_KILL_GRACE_SECONDS = 2.0
+_POLL_INTERVAL_SECONDS = 0.01
 
 EvaluationMode = Literal["development", "final"]
 StepStatus = Literal["PASS", "FAIL", "UNAVAILABLE"]
@@ -161,31 +163,69 @@ def _resolve_cwd(root: Path, cwd: str) -> Path:
     return command_cwd
 
 
-def _terminate_process_group(process: subprocess.Popen[bytes]) -> str | None:
+def _process_group_active(pgid: int) -> bool:
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        right = stat.rsplit(")", 1)
+        if len(right) != 2:
+            continue
+        fields = right[1].strip().split()
+        if len(fields) < 3:
+            continue
+        try:
+            state = fields[0]
+            process_group = int(fields[2])
+        except ValueError:
+            continue
+        if process_group == pgid and state != "Z":
+            return True
+    return False
+
+
+def _wait_process_group_gone(process: subprocess.Popen[bytes], pgid: int, deadline: float) -> bool:
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            try:
+                process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                pass
+        if not _process_group_active(pgid):
+            return True
+        time.sleep(_POLL_INTERVAL_SECONDS)
+    return not _process_group_active(pgid)
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes], pgid: int) -> str | None:
     try:
-        pgid = os.getpgid(process.pid)
+        current = os.getpgid(process.pid)
+    except ProcessLookupError:
+        current = pgid
     except OSError as exc:
         if exc.errno == errno.ESRCH:
-            return None
-        return f"Unable to inspect verifier process group: {exc}"
-    for sig, deadline in ((signal.SIGTERM, time.monotonic() + _TERMINATE_GRACE_SECONDS), (signal.SIGKILL, None)):
+            current = pgid
+        else:
+            return f"Unable to inspect verifier process group: {exc}"
+    if current != pgid and process.poll() is None:
+        return "Verifier process group changed unexpectedly; cleanup cannot be trusted."
+
+    for sig, deadline in (
+        (signal.SIGTERM, time.monotonic() + _TERMINATE_GRACE_SECONDS),
+        (signal.SIGKILL, time.monotonic() + _KILL_GRACE_SECONDS),
+    ):
         try:
             os.killpg(pgid, sig)
         except ProcessLookupError:
             return None
         except OSError as exc:
             return f"Unable to signal verifier process group: {exc}"
-        if deadline is None:
-            try:
-                process.wait(timeout=_TERMINATE_GRACE_SECONDS)
-                return None
-            except subprocess.TimeoutExpired:
-                return "Verifier process group did not exit after SIGKILL."
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                return None
-            time.sleep(0.01)
-    return None
+        if _wait_process_group_gone(process, pgid, deadline):
+            return None
+    return "Verifier process group still exists after SIGKILL; cleanup cannot be trusted."
 
 
 def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
@@ -205,8 +245,10 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
     stderr = _RetainedOutput()
     selector = selectors.DefaultSelector()
     process: subprocess.Popen[bytes] | None = None
+    pgid: int | None = None
     timed_out = False
     cleanup_error: str | None = None
+    descendant_error: str | None = None
     try:
         try:
             process = subprocess.Popen(
@@ -216,6 +258,7 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
                 stderr=subprocess.PIPE,
                 start_new_session=True,
             )
+            pgid = os.getpgid(process.pid)
         except FileNotFoundError as exc:
             return StepEvidence(
                 name=step.display_name,
@@ -242,12 +285,15 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
         selector.register(process.stdout, selectors.EVENT_READ, stdout)
         selector.register(process.stderr, selectors.EVENT_READ, stderr)
         deadline = time.monotonic() + step.timeout_seconds
-        while selector.get_map():
+        while selector.get_map() or process.poll() is None:
             remaining = deadline - time.monotonic()
-            if remaining <= 0 and process.poll() is None:
+            if remaining <= 0 and not timed_out:
                 timed_out = True
-                cleanup_error = _terminate_process_group(process)
-            events = selector.select(max(0.0, min(0.05, remaining)) if not timed_out else 0.05)
+                cleanup_error = _terminate_process_group(process, pgid)
+            if cleanup_error is not None:
+                break
+            wait_time = max(0.0, min(0.05, remaining)) if not timed_out else 0.05
+            events = selector.select(wait_time) if selector.get_map() else []
             if not events and timed_out and process.poll() is not None:
                 # Keep draining briefly after the process exits; EOF unregisters pipes.
                 pass
@@ -267,7 +313,11 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
                     selector.unregister(stream)
     except KeyboardInterrupt:
         if process is not None and process.poll() is None:
-            _terminate_process_group(process)
+            try:
+                interrupt_pgid = pgid if pgid is not None else os.getpgid(process.pid)
+                _terminate_process_group(process, interrupt_pgid)
+            except OSError:
+                pass
         raise
     finally:
         selector.close()
@@ -278,7 +328,23 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
 
     exit_code = None if process is None else process.poll()
     if process is not None and exit_code is None:
-        exit_code = process.wait()
+        try:
+            exit_code = process.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            if pgid is not None:
+                cleanup_error = cleanup_error or _terminate_process_group(process, pgid)
+            exit_code = process.poll()
+    if process is not None and pgid is not None and not timed_out and cleanup_error is None:
+        try:
+            process.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            pass
+        if _process_group_active(pgid):
+            cleanup_error = _terminate_process_group(process, pgid)
+            descendant_error = (
+                cleanup_error
+                or "Verifier left running process-group members after command completion; EkzD terminated them."
+            )
     if timed_out:
         return StepEvidence(
             name=step.display_name,
@@ -293,6 +359,20 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
             stderr_truncated=stderr.truncated,
             timed_out=True,
             cleanup_error=cleanup_error,
+        )
+    if descendant_error is not None:
+        return StepEvidence(
+            name=step.display_name,
+            command=step.command,
+            cwd=step.cwd,
+            status="FAIL",
+            message="Verification command left running process-group members after completion.",
+            exit_code=exit_code,
+            stdout=stdout.text(),
+            stderr=stderr.text(),
+            stdout_truncated=stdout.truncated,
+            stderr_truncated=stderr.truncated,
+            cleanup_error=descendant_error,
         )
     status: StepStatus = "PASS" if exit_code == 0 else "FAIL"
     message = "Verification command passed." if exit_code == 0 else f"Verification command exited with status {exit_code}."
@@ -316,27 +396,68 @@ def evaluate_candidate(
     *,
     mode: EvaluationMode,
     implementation_branch: str | None = None,
+    expected_candidate: Candidate | None = None,
 ) -> EvaluationResult:
     collected: list[StepEvidence] = []
-    try:
-        candidate = capture_candidate(root)
-    except HarnessError as exc:
-        return EvaluationResult(
-            mode=mode,
-            status="UNAVAILABLE",
-            candidate=None,
-            steps=(
-                StepEvidence(
-                    name="candidate-state",
-                    command=(),
-                    cwd=".",
-                    status="UNAVAILABLE",
-                    message=str(exc),
-                    launch_error=str(exc),
+    if expected_candidate is None:
+        try:
+            candidate = capture_candidate(root)
+        except HarnessError as exc:
+            return EvaluationResult(
+                mode=mode,
+                status="UNAVAILABLE",
+                candidate=None,
+                steps=(
+                    StepEvidence(
+                        name="candidate-state",
+                        command=(),
+                        cwd=".",
+                        status="UNAVAILABLE",
+                        message=str(exc),
+                        launch_error=str(exc),
+                    ),
                 ),
-            ),
-            final_binding_error=str(exc),
-        )
+                final_binding_error=str(exc),
+            )
+    else:
+        candidate = expected_candidate
+        try:
+            if capture_candidate(root) != candidate:
+                message = "Candidate changed between evaluation boundaries."
+                return EvaluationResult(
+                    mode=mode,
+                    status="FAIL",
+                    candidate=candidate,
+                    steps=(
+                        StepEvidence(
+                            name="state-binding",
+                            command=(),
+                            cwd=".",
+                            status="FAIL",
+                            message=message,
+                            mutation_error=message,
+                        ),
+                    ),
+                    final_binding_error=message,
+                )
+        except HarnessError as exc:
+            message = f"Candidate trust lost before verification command: {exc}"
+            return EvaluationResult(
+                mode=mode,
+                status="UNAVAILABLE",
+                candidate=candidate,
+                steps=(
+                    StepEvidence(
+                        name="state-binding",
+                        command=(),
+                        cwd=".",
+                        status="UNAVAILABLE",
+                        message=message,
+                        mutation_error=message,
+                    ),
+                ),
+                final_binding_error=message,
+            )
     if mode == "final":
         try:
             if implementation_branch is None:

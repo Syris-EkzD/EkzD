@@ -65,10 +65,14 @@ class TaskManifestTests(unittest.TestCase):
         self.assertEqual("0.2.0", task.ekzd_version)
         self.assertEqual("a" * 64, task.ekzd_build_sha256)
 
+    def test_schema_v1_rejects_foreign_ekzd_identity_table(self) -> None:
+        with self.assertRaisesRegex(HarnessError, "task manifest contains unknown key: ekzd"):
+            load_task_manifest(self._write(VALID_V2.replace("schema_version = 2", "schema_version = 1")))
+
     def test_schema_v2_rejects_missing_or_invalid_ekzd_identity(self) -> None:
         without_table = VALID.replace("schema_version = 1", "schema_version = 2")
         for content, message in (
-            (without_table, "\[ekzd\]"),
+            (without_table, r"\[ekzd\]"),
             (VALID_V2.replace('version = "0.2.0"', 'version = ""'), "ekzd.version"),
             (VALID_V2.replace("a" * 64, "abc"), "ekzd.build_sha256"),
             (VALID_V2.replace("a" * 64, "z" * 64), "ekzd.build_sha256"),

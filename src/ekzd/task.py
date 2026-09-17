@@ -261,23 +261,6 @@ def load_task_manifest(path: Path) -> TaskManifest:
         raise HarnessError(f"Unable to parse task manifest {resolved}: {exc}") from exc
     if not isinstance(data, dict):
         raise HarnessError("Task manifest must contain a TOML document.")
-    _reject_unknown_keys(
-        data,
-        {
-            "schema_version",
-            "objective",
-            "baseline",
-            "implementation_branch",
-            "max_commits",
-            "repository",
-            "ekzd",
-            "scope",
-            "acceptance",
-            "verification",
-        },
-        "task manifest",
-    )
-
     schema_version = data.get("schema_version")
     if (
         isinstance(schema_version, bool)
@@ -286,6 +269,20 @@ def load_task_manifest(path: Path) -> TaskManifest:
     ):
         supported = ", ".join(str(value) for value in sorted(TASK_SCHEMA_VERSIONS))
         raise HarnessError(f"task schema_version must be one of the supported integers: {supported}.")
+    allowed = {
+        "schema_version",
+        "objective",
+        "baseline",
+        "implementation_branch",
+        "max_commits",
+        "repository",
+        "scope",
+        "acceptance",
+        "verification",
+    }
+    if schema_version == 2:
+        allowed.add("ekzd")
+    _reject_unknown_keys(data, allowed, "task manifest")
 
     objective = data.get("objective")
     if not isinstance(objective, str) or not objective.strip():

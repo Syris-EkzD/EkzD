@@ -6,8 +6,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ekzd.worker import run_worker_check
+from ekzd import worker
 
 
 class WorkerCheckTests(unittest.TestCase):
@@ -298,6 +300,22 @@ class WorkerCheckTests(unittest.TestCase):
         self.assertIn("candidate_error", checks["task:mutate"]["details"])
         self.assertNotIn("task:later", checks)
         self.assertEqual("mutated\n", (self.root / "allowed.txt").read_text(encoding="utf-8"))
+
+    def test_candidate_change_after_scope_checks_is_not_rebound_by_evaluator(self) -> None:
+        original = worker.evaluate_candidate
+
+        def mutate_before_evaluator(*args, **kwargs):
+            (self.root / "allowed.txt").write_text("changed after scope\n", encoding="utf-8")
+            return original(*args, **kwargs)
+
+        with mock.patch.object(worker, "evaluate_candidate", side_effect=mutate_before_evaluator):
+            result = run_worker_check(self.root, self.task_path)
+
+        checks = self._checks(result)
+        self.assertFalse(result["ready"])
+        self.assertEqual("FAIL", checks["state-binding"]["status"])
+        self.assertIn("Candidate changed between evaluation boundaries", checks["state-binding"]["message"])
+        self.assertTrue(result["git"]["clean"])
 
     def test_repository_identity_mismatch_is_safe_and_blocks(self) -> None:
         self._git("remote", "add", "origin", "https://user:supersecret@github.com/example/demo.git?token=hunter2#frag")

@@ -193,6 +193,70 @@ class EvaluationPhase2Tests(unittest.TestCase):
         self.assertTrue(result.steps[0].timed_out)
         self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
 
+    def test_timeout_escalates_sigterm_resistant_child_before_late_mutation(self) -> None:
+        marker = self.root / "allowed.txt"
+        child = (
+            "import signal, time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "time.sleep(2.0); "
+            "open('allowed.txt','w').write('late mutation\\n')"
+        )
+        parent = (
+            "import subprocess, sys, time; "
+            f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+            "time.sleep(5)"
+        )
+        self.freeze([])
+
+        result = evaluate_candidate(
+            self.root,
+            (VerificationStep("timeout", (sys.executable, "-c", parent), timeout_seconds=1),),
+            mode="development",
+        )
+        time.sleep(1.5)
+
+        self.assertEqual("FAIL", result.status)
+        self.assertTrue(result.steps[0].timed_out)
+        self.assertIsNone(result.steps[0].cleanup_error)
+        self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
+
+    def test_parent_exit_before_descendant_still_obeys_timeout_deadline(self) -> None:
+        child = "import time; time.sleep(3)"
+        parent = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])"
+        self.freeze([])
+
+        started = time.monotonic()
+        result = run_verification_step(
+            self.root,
+            VerificationStep("orphaned-pipe", (sys.executable, "-c", parent), timeout_seconds=1),
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertEqual("FAIL", result.status)
+        self.assertTrue(result.timed_out)
+        self.assertLess(elapsed, 2.5)
+
+    def test_parent_completion_with_live_descendant_is_not_trustworthy_pass(self) -> None:
+        marker = self.root / "allowed.txt"
+        child = "import time; time.sleep(1.5); open('allowed.txt','w').write('late mutation\\n')"
+        parent = (
+            "import subprocess, sys; "
+            f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+        )
+        self.freeze([])
+
+        result = run_verification_step(
+            self.root,
+            VerificationStep("live-descendant", (sys.executable, "-c", parent), timeout_seconds=5),
+        )
+        time.sleep(1.8)
+
+        self.assertEqual("FAIL", result.status)
+        self.assertFalse(result.timed_out)
+        self.assertIn("process-group members", result.message)
+        self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
+
     def test_large_output_is_bounded_and_marked_truncated(self) -> None:
         self.freeze([])
         code = "import sys; sys.stdout.buffer.write(b'a'*20000); sys.stderr.buffer.write(b'b'*20000)"
