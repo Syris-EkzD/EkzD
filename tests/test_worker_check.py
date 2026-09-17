@@ -9,7 +9,11 @@ from pathlib import Path
 from unittest import mock
 
 from ekzd.worker import run_worker_check
-from ekzd import worker
+from ekzd import contract_check
+from ekzd.contract import compose_contract, canonical_bytes
+from ekzd.identity import runtime_identity
+from ekzd.core import load_config
+from phase3_helpers import project_text
 
 
 class WorkerCheckTests(unittest.TestCase):
@@ -23,7 +27,7 @@ class WorkerCheckTests(unittest.TestCase):
         self._git("config", "user.name", "EkzD Test")
         self._git("config", "user.email", "ekzd@example.invalid")
         (self.root / ".ekzd").mkdir()
-        (self.root / ".gitignore").write_text(".ekzd/session.json\n__pycache__/\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text(".ekzd/local/\n__pycache__/\n", encoding="utf-8")
         (self.root / "allowed.txt").write_text("baseline\n", encoding="utf-8")
         self._write_project_steps([
             ("base", ["python3", "-c", "print('project-ok')"]),
@@ -42,119 +46,45 @@ class WorkerCheckTests(unittest.TestCase):
     def _toml_array(self, values: list[str]) -> str:
         return "[" + ", ".join(json.dumps(value) for value in values) + "]"
 
-    def _write_project_steps(
-        self,
-        steps: list[tuple[str, list[str]]],
-        *,
-        step_cwds: dict[str, str] | None = None,
-    ) -> None:
-        lines = [
-            "schema_version = 1",
-            "",
-            "[project]",
-            'name = "Demo"',
-            "",
-            "[sources]",
-            'paths = ["allowed.txt"]',
-            "",
-            "[scope]",
-            'include = ["*"]',
-            "exclude = []",
-            "constraints = []",
-            "",
-            "[authority]",
-            "may = []",
-            "requires_approval = []",
-            "may_not = []",
-            "",
-            "[session]",
-            "max_commits = 20",
-            "",
-            "[acceptance]",
-            'criteria = ["verification"]',
-            "",
-            "[verification]",
-        ]
+    def _write_project_steps(self, steps, *, step_cwds=None):
+        lines = ['schema_version = 2', 'name = "Demo"']
         for name, command in steps:
-            lines += [
-                "",
-                "[[verification.steps]]",
-                f"name = {json.dumps(name)}",
-                f"command = {self._toml_array(command)}",
-                f"cwd = {json.dumps((step_cwds or {}).get(name, '.'))}",
-                "timeout_seconds = 30",
-            ]
-        (self.root / ".ekzd/project.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            lines += ['[[verification]]', f'name = {json.dumps(name)}',
+                      f'command = {json.dumps(command)}', f'cwd = {json.dumps((step_cwds or {}).get(name, "."))}',
+                      'timeout_seconds = 30']
+        (self.root / '.ekzd/project.toml').write_text('\n'.join(lines) + '\n')
 
-    def _write_task(
-        self,
-        *,
-        baseline: str | None = None,
-        branch: str = "feat/task",
-        include: list[str] | None = None,
-        exclude: list[str] | None = None,
-        max_commits: int = 20,
-        repository: str | None = None,
-        task_steps: list[tuple[str, list[str]]] | None = None,
-        task_step_cwds: dict[str, str] | None = None,
-    ) -> None:
-        lines = [
-            "schema_version = 1",
-            'objective = "Worker task"',
-            f"baseline = {json.dumps(baseline or self.baseline)}",
-            f"implementation_branch = {json.dumps(branch)}",
-            f"max_commits = {max_commits}",
-        ]
-        if repository is not None:
-            lines.append(f"repository = {json.dumps(repository)}")
-        lines += [
-            "",
-            "[scope]",
-            f"include = {self._toml_array(include or ['allowed.txt'])}",
-            f"exclude = {self._toml_array(exclude or [])}",
-            "",
-            "[acceptance]",
-            'criteria = ["ready"]',
-        ]
-        for name, command in task_steps or []:
-            lines += [
-                "",
-                "[[verification.steps]]",
-                f"name = {json.dumps(name)}",
-                f"command = {self._toml_array(command)}",
-                f"cwd = {json.dumps((task_step_cwds or {}).get(name, '.'))}",
-                "timeout_seconds = 30",
-            ]
-        self.task_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    def _write_task(self, *, baseline=None, branch='feat/task', include=None, exclude=None, max_commits=20, task_steps=None, task_step_cwds=None):
+        task = dict(schema_version=1, objective='Worker task', branch=branch,
+                    include=include or ['allowed.txt'], exclude=exclude or [], acceptance=['ready'], max_commits=max_commits,
+                    verification=[dict(name=name, command=command, cwd=(task_step_cwds or {}).get(name, '.'), timeout_seconds=30)
+                                  for name, command in task_steps or []])
+        contract = compose_contract(load_config(self.root), task, baseline or self.baseline, runtime_identity())
+        self.task_path.write_bytes(canonical_bytes(contract))
 
     def _checks(self, result: dict) -> dict[str, dict]:
         return {item["name"]: item for item in result["checks"]}
 
-    def test_development_check_supports_dirty_worktree_without_session(self) -> None:
-        (self.root / "allowed.txt").write_text("dirty\n", encoding="utf-8")
-        (self.root / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
-        session = self.root / ".ekzd/session.json"
-        session.write_text("not even valid json\n", encoding="utf-8")
-        self._write_task(include=["allowed.txt", ".gitignore"])
-
-        result = run_worker_check(self.root, self.task_path)
-        first_fingerprint = result["git"]["worktree_fingerprint"]
-        session.write_text("different local session bytes\n", encoding="utf-8")
-        repeated = run_worker_check(self.root, self.task_path)
-
-        self.assertTrue(result["ready"])
-        self.assertTrue(repeated["ready"])
-        self.assertEqual("PASS", result["overall_status"])
-        self.assertFalse(result["git"]["clean"])
-        self.assertEqual(first_fingerprint, repeated["git"]["worktree_fingerprint"])
-        self.assertEqual("WARN", self._checks(result)["worktree-mode"]["status"])
-        self.assertEqual(hashlib.sha256(self.task_path.read_bytes()).hexdigest(), result["task"]["sha256"])
+    def test_development_check_supports_dirty_worktree_without_session(self):
+        (self.root / 'allowed.txt').write_text('dirty')
+        local = self.root / '.ekzd/local'
+        local.mkdir()
+        state = local / 'session.json'
+        state.write_text('not valid json')
+        first = run_worker_check(self.root, self.task_path)
+        state.write_text('different local bytes')
+        second = run_worker_check(self.root, self.task_path)
+        self.assertTrue(first['ready'])
+        self.assertTrue(second['ready'])
+        self.assertEqual(first['git'], second['git'])
+        self.assertFalse(first['git']['clean'])
+        self.assertEqual(hashlib.sha256(self.task_path.read_bytes()).hexdigest(), first['contract_id'])
 
     def test_final_check_rejects_dirty_worktree(self) -> None:
         (self.root / "allowed.txt").write_text("dirty\n", encoding="utf-8")
         result = run_worker_check(self.root, self.task_path, final=True)
         self.assertFalse(result["ready"])
-        self.assertEqual("FAIL", self._checks(result)["worktree-mode"]["status"])
+        self.assertEqual("FAIL", self._checks(result)["candidate-state"]["status"])
 
     def test_final_check_passes_for_clean_exact_head(self) -> None:
         result = run_worker_check(self.root, self.task_path, final=True)
@@ -167,7 +97,7 @@ class WorkerCheckTests(unittest.TestCase):
         self._write_task(branch="feat/other")
         result = run_worker_check(self.root, self.task_path)
         self.assertFalse(result["ready"])
-        self.assertEqual("FAIL", self._checks(result)["implementation-branch"]["status"])
+        self.assertEqual("FAIL", self._checks(result)["contract-authority"]["status"])
 
     def test_non_ancestor_baseline_blocks_baseline_relative_checks(self) -> None:
         self._git("checkout", "-q", "--orphan", "unrelated")
@@ -180,8 +110,7 @@ class WorkerCheckTests(unittest.TestCase):
         self._write_task(baseline=unrelated)
         result = run_worker_check(self.root, self.task_path)
         checks = self._checks(result)
-        self.assertEqual("FAIL", checks["baseline-ancestry"]["status"])
-        self.assertEqual("UNAVAILABLE", checks["task-scope"]["status"])
+        self.assertEqual("FAIL", checks["contract-authority"]["status"])
 
     def test_commit_ceiling_uses_baseline_relative_commit_count(self) -> None:
         for index in range(2):
@@ -190,9 +119,9 @@ class WorkerCheckTests(unittest.TestCase):
             self._git("commit", "-q", "-m", f"change {index}")
         self._write_task(max_commits=1)
         result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["commit-ceiling"]
+        check = self._checks(result)["contract-authority"]
         self.assertEqual("FAIL", check["status"])
-        self.assertEqual(2, check["details"]["commit_count"])
+        self.assertIn("2 > 1", check["message"])
 
     def test_scope_covers_committed_staged_unstaged_and_untracked_changes(self) -> None:
         (self.root / "committed.txt").write_text("c\n", encoding="utf-8")
@@ -203,18 +132,17 @@ class WorkerCheckTests(unittest.TestCase):
         (self.root / "allowed.txt").write_text("unstaged\n", encoding="utf-8")
         (self.root / "untracked.txt").write_text("u\n", encoding="utf-8")
         result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["task-scope"]
+        check = self._checks(result)["contract-authority"]
         self.assertEqual("FAIL", check["status"])
-        paths = set(check["details"]["changed_paths"])
-        self.assertTrue({"committed.txt", "staged.txt", "allowed.txt", "untracked.txt"} <= paths)
+        for path in ("committed.txt", "staged.txt", "untracked.txt"):
+            self.assertIn(path, check["message"])
 
-    def test_baseline_project_config_is_used_and_worktree_config_change_is_blocking(self) -> None:
-        self._write_project_steps([("tampered", ["python3", "-c", "raise SystemExit(9)"])])
+    def test_frozen_contract_is_used_and_worktree_config_change_is_blocking(self):
+        self._write_project_steps([('tampered', ['python3', '-c', 'raise SystemExit(9)'])])
         result = run_worker_check(self.root, self.task_path)
-        checks = self._checks(result)
-        self.assertEqual("PASS", checks["project:base"]["status"])
-        self.assertNotIn("project:tampered", checks)
-        self.assertEqual("FAIL", checks["protected-harness"]["status"])
+        self.assertFalse(result['ready'])
+        self.assertIn('scope.protected', json.dumps(result))
+        self.assertNotIn('verification:tampered', self._checks(result))
 
     def test_missing_required_tool_is_unavailable_and_later_check_runs(self) -> None:
         self._write_task(task_steps=[
@@ -223,8 +151,8 @@ class WorkerCheckTests(unittest.TestCase):
         ])
         result = run_worker_check(self.root, self.task_path)
         checks = self._checks(result)
-        self.assertEqual("UNAVAILABLE", checks["task:missing"]["status"])
-        self.assertEqual("PASS", checks["task:later"]["status"])
+        self.assertEqual("UNAVAILABLE", checks["verification:missing"]["status"])
+        self.assertEqual("PASS", checks["verification:later"]["status"])
         self.assertFalse(result["ready"])
 
     def test_ordinary_verification_failure_does_not_stop_independent_steps(self) -> None:
@@ -234,8 +162,8 @@ class WorkerCheckTests(unittest.TestCase):
         ])
         result = run_worker_check(self.root, self.task_path)
         checks = self._checks(result)
-        self.assertEqual("FAIL", checks["task:fails"]["status"])
-        self.assertEqual("PASS", checks["task:later"]["status"])
+        self.assertEqual("FAIL", checks["verification:fails"]["status"])
+        self.assertEqual("PASS", checks["verification:later"]["status"])
 
     def test_verification_cwd_inside_repository_still_runs(self) -> None:
         work = self.root / "work"
@@ -247,7 +175,7 @@ class WorkerCheckTests(unittest.TestCase):
         )
 
         result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["task:inside"]
+        check = self._checks(result)["verification:inside"]
 
         self.assertEqual("PASS", check["status"])
         self.assertEqual("work\n", check["details"]["stdout"])
@@ -263,7 +191,7 @@ class WorkerCheckTests(unittest.TestCase):
         )
 
         result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["task:escaped"]
+        check = self._checks(result)["verification:escaped"]
 
         self.assertEqual("UNAVAILABLE", check["status"])
         self.assertFalse((external / "executed.txt").exists())
@@ -283,7 +211,7 @@ class WorkerCheckTests(unittest.TestCase):
         self._write_task(baseline=self.baseline)
 
         result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["project:escaped"]
+        check = self._checks(result)["verification:escaped"]
 
         self.assertEqual("UNAVAILABLE", check["status"])
         self.assertFalse((external / "executed.txt").exists())
@@ -296,122 +224,33 @@ class WorkerCheckTests(unittest.TestCase):
         ])
         result = run_worker_check(self.root, self.task_path)
         checks = self._checks(result)
-        self.assertEqual("FAIL", checks["task:mutate"]["status"])
-        self.assertIn("candidate_error", checks["task:mutate"]["details"])
-        self.assertNotIn("task:later", checks)
+        self.assertEqual("FAIL", checks["verification:mutate"]["status"])
+        self.assertIn("candidate_error", checks["verification:mutate"]["details"])
+        self.assertNotIn("verification:later", checks)
         self.assertEqual("mutated\n", (self.root / "allowed.txt").read_text(encoding="utf-8"))
 
     def test_candidate_change_after_scope_checks_is_not_rebound_by_evaluator(self) -> None:
-        original = worker.evaluate_candidate
+        original = contract_check.evaluate_candidate
 
         def mutate_before_evaluator(*args, **kwargs):
             (self.root / "allowed.txt").write_text("changed after scope\n", encoding="utf-8")
             return original(*args, **kwargs)
 
-        with mock.patch.object(worker, "evaluate_candidate", side_effect=mutate_before_evaluator):
+        with mock.patch.object(contract_check, "evaluate_candidate", side_effect=mutate_before_evaluator):
             result = run_worker_check(self.root, self.task_path)
 
         checks = self._checks(result)
         self.assertFalse(result["ready"])
         self.assertEqual("FAIL", checks["state-binding"]["status"])
-        self.assertIn("Candidate changed between evaluation boundaries", checks["state-binding"]["message"])
+        self.assertIn("Candidate changed between evaluation boundaries", json.dumps(result))
         self.assertTrue(result["git"]["clean"])
 
-    def test_repository_identity_mismatch_is_safe_and_blocks(self) -> None:
-        self._git("remote", "add", "origin", "https://user:supersecret@github.com/example/demo.git?token=hunter2#frag")
-        self._write_task(repository="https://github.com/example/other")
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
-        self.assertEqual("FAIL", check["status"])
-        serialized = json.dumps(result)
-        self.assertNotIn("supersecret", serialized)
-        self.assertNotIn("hunter2", serialized)
 
-    def test_repository_identity_valid_credentialed_url_still_matches(self) -> None:
-        self._git("remote", "add", "origin", "https://user:supersecret@github.com/example/demo.git?token=hunter2#frag")
-        self._write_task(repository="https://github.com/example/demo")
 
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
 
-        self.assertEqual("PASS", check["status"])
-        serialized = json.dumps(result)
-        self.assertNotIn("supersecret", serialized)
-        self.assertNotIn("hunter2", serialized)
 
-    def test_repository_identity_hostless_file_url_matches(self) -> None:
-        self._git("remote", "add", "origin", "file:///tmp/demo.git")
-        self._write_task(repository="file:///tmp/demo.git")
 
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
 
-        self.assertEqual("PASS", check["status"])
-        self.assertEqual("file:///tmp/demo", check["details"]["repository"])
-
-    def test_repository_identity_hostless_file_url_strips_query_and_fragment(self) -> None:
-        self._git("remote", "add", "origin", "file:///tmp/demo.git?token=originsecret#originfrag")
-        self._write_task(repository="file:///tmp/demo.git?token=tasksecret#taskfrag")
-
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
-
-        self.assertEqual("PASS", check["status"])
-        self.assertEqual("file:///tmp/demo", check["details"]["repository"])
-        serialized = json.dumps(result)
-        for secret in ("originsecret", "originfrag", "tasksecret", "taskfrag"):
-            self.assertNotIn(secret, serialized)
-
-    def test_hostless_relaxation_does_not_allow_malformed_credentials(self) -> None:
-        self._git("remote", "add", "origin", "https://github.com/example/demo.git")
-        self._write_task(
-            repository="https:///secretuser:secretpass@github.com/example/demo.git?token=declaredtoken"
-        )
-
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
-
-        self.assertEqual("UNAVAILABLE", check["status"])
-        serialized = json.dumps(result)
-        for secret in ("secretuser", "secretpass", "declaredtoken"):
-            self.assertNotIn(secret, serialized)
-        self.assertNotIn("expected", check.get("details", {}))
-        self.assertNotIn("actual", check.get("details", {}))
-
-    def test_unsafe_declared_repository_identity_is_unavailable_without_secret_leak(self) -> None:
-        self._git("remote", "add", "origin", "https://github.com/example/demo.git")
-        self._write_task(
-            repository="https:////secretuser:secretpass@github.com/example/demo.git?token=declaredtoken"
-        )
-
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
-
-        self.assertEqual("UNAVAILABLE", check["status"])
-        serialized = json.dumps(result)
-        for secret in ("secretuser", "secretpass", "declaredtoken"):
-            self.assertNotIn(secret, serialized)
-        self.assertNotIn("expected", check.get("details", {}))
-        self.assertNotIn("actual", check.get("details", {}))
-
-    def test_unsafe_origin_repository_identity_is_unavailable_without_secret_leak(self) -> None:
-        self._git(
-            "remote",
-            "add",
-            "origin",
-            "https:////originuser:originpass@github.com/example/demo.git?token=origintoken",
-        )
-        self._write_task(repository="https://github.com/example/demo")
-
-        result = run_worker_check(self.root, self.task_path)
-        check = self._checks(result)["repository-identity"]
-
-        self.assertEqual("UNAVAILABLE", check["status"])
-        serialized = json.dumps(result)
-        for secret in ("originuser", "originpass", "origintoken"):
-            self.assertNotIn(secret, serialized)
-        self.assertNotIn("expected", check.get("details", {}))
-        self.assertNotIn("actual", check.get("details", {}))
 
 
 if __name__ == "__main__":

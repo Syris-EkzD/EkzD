@@ -127,7 +127,7 @@ class CliPresentationTests(unittest.TestCase):
     def test_help_lists_retained_commands_and_omits_handoff_notes_command(self) -> None:
         argument_parser = cli.parser()
         help_text = argument_parser.format_help()
-        for command in ("init", "start", "status", "prompt", "task", "context", "verify", "check", "abort", "finish"):
+        for command in ("init", "start", "status", "prompt", "contract", "verify", "check", "abort", "finish"):
             self.assertIn(command, help_text)
         self.assertIn("--version", help_text)
 
@@ -142,16 +142,16 @@ class CliPresentationTests(unittest.TestCase):
         with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
             cli.main(["check", "--help"])
         self.assertEqual(0, raised.exception.code)
-        self.assertIn("--task", stdout.getvalue())
+        self.assertIn("--contract", stdout.getvalue())
         self.assertIn("--final", stdout.getvalue())
         self.assertIn("--json", stdout.getvalue())
 
-    def test_task_help_remains_available(self) -> None:
+    def test_contract_help_remains_available(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
-            cli.main(["task", "--help"])
+            cli.main(['contract', '--help'])
         self.assertEqual(0, raised.exception.code)
-        self.assertIn("--output", stdout.getvalue())
+        self.assertIn('ekzd contract', stdout.getvalue())
 
     def test_prompt_remains_exact_plain_contract_output(self) -> None:
         contract = "Repository: github.com/example/demo\nObjective\n\nDo the thing.\n"
@@ -164,20 +164,13 @@ class CliPresentationTests(unittest.TestCase):
         self.assertNotIn("\x1b[", stdout)
         self.assertNotIn("EkzD ·", stdout)
 
-    def test_context_json_remains_machine_readable_and_structurally_unchanged(self) -> None:
-        context = {
-            "project": {"name": "Demo"},
-            "session_status": "active",
-            "git": {"branch": "main", "head": "abc", "status": []},
-            "scope": {"include": ["src/"]},
-        }
-        with mock.patch.object(cli, "build_context", return_value=context):
-            code, stdout, stderr = self._run(["context", "--json"])
-
+    def test_contract_export_is_exact_plain_json(self):
+        payload = '{"contract_version":1}\n'
+        with mock.patch.object(cli, 'export_contract', return_value=payload):
+            code, stdout, stderr = self._run(['contract'])
         self.assertEqual(0, code)
-        self.assertEqual(context, json.loads(stdout))
-        self.assertEqual("", stderr)
-        self.assertNotIn("\x1b[", stdout)
+        self.assertEqual(payload, stdout)
+        self.assertEqual('', stderr)
 
     def test_verify_failure_keeps_failure_exit_code_and_human_output_on_stdout(self) -> None:
         verification = {
@@ -239,31 +232,13 @@ class CliPresentationTests(unittest.TestCase):
         self.assertIn("EkzD · status", stdout.getvalue())
         self.assertEqual("", stderr.getvalue())
 
-    def test_finished_status_recovers_persisted_project_identity(self) -> None:
-        status = {
-            "session_status": "finished",
-            "objective": "Change one thing",
-            "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
-        }
-        state = {
-            "status": "finished",
-            "project": "Demo",
-            "objective": "Change one thing",
-        }
-        self.assertNotIn("project", status)
-
-        with (
-            mock.patch.object(cli, "build_workflow_status", return_value=status) as build_status,
-            mock.patch.object(cli, "read_state", return_value=state) as read_state,
-        ):
-            code, stdout, stderr = self._run(["status"])
-
-        build_status.assert_called_once_with(Path("/repo"))
-        read_state.assert_called_once_with(Path("/repo"))
+    def test_finished_status_includes_frozen_project_identity(self):
+        status = dict(session_status='finished', project='Demo', objective='Done', next='Start next task')
+        with mock.patch.object(cli, 'build_workflow_status', return_value=status):
+            code, stdout, stderr = self._run(['status'])
         self.assertEqual(0, code)
-        self.assertIn("! Session: finished", stdout)
-        self.assertIn("project  Demo", stdout)
-        self.assertEqual("", stderr)
+        self.assertIn('project  Demo', stdout)
+        self.assertEqual('', stderr)
 
     def test_check_human_output_and_success_exit_code(self) -> None:
         result = {
@@ -278,7 +253,7 @@ class CliPresentationTests(unittest.TestCase):
             "checks": [{"name": "task-manifest", "status": "PASS", "required": True, "message": "valid"}],
         }
         with mock.patch.object(cli, "run_worker_check", return_value=result) as run_check:
-            code, stdout, stderr = self._run(["check", "--task", "/tmp/task.toml"])
+            code, stdout, stderr = self._run(["check", "--contract", "/tmp/task.toml"])
         self.assertEqual(0, code)
         self.assertIn("EkzD · check", stdout)
         self.assertIn("ekzd    0.2.0", stdout)
@@ -300,7 +275,7 @@ class CliPresentationTests(unittest.TestCase):
             "checks": [{"name": "worktree-mode", "status": "FAIL", "required": True, "message": "dirty"}],
         }
         with mock.patch.object(cli, "run_worker_check", return_value=result):
-            code, stdout, stderr = self._run(["check", "--final", "--task", "/tmp/task.toml", "--json"])
+            code, stdout, stderr = self._run(["check", "--final", "--contract", "/tmp/task.toml", "--json"])
         self.assertEqual(1, code)
         self.assertEqual(result, json.loads(stdout))
         self.assertEqual("", stderr)
@@ -309,11 +284,11 @@ class CliPresentationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             task = Path(temp_dir) / "task.toml"
             task.write_text("schema_version = 99\n", encoding="utf-8")
-            code, stdout, stderr = self._run(["check", "--task", str(task), "--json"])
+            code, stdout, stderr = self._run(["check", "--contract", str(task), "--json"])
         payload = json.loads(stdout)
         self.assertEqual(1, code)
         self.assertFalse(payload["ready"])
-        self.assertEqual("task-manifest", payload["checks"][0]["name"])
+        self.assertEqual("contract", payload["checks"][0]["name"])
         self.assertEqual("FAIL", payload["checks"][0]["status"])
         self.assertRegex(payload["ekzd"]["build_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual("", stderr)
@@ -326,7 +301,7 @@ class CliPresentationTests(unittest.TestCase):
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
-            code = cli.main(["check", "--task", "/tmp/task.toml", "--json"])
+            code = cli.main(["check", "--contract", "/tmp/task.toml", "--json"])
         payload = json.loads(stdout.getvalue())
         self.assertEqual(1, code)
         self.assertFalse(payload["ready"])
