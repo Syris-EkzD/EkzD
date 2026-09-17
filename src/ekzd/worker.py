@@ -25,6 +25,6 @@ def run_worker_check(root: Path, contract_path: Path, *, final: bool = False) ->
         return result
     except (HarnessError, OSError) as exc:
         result = empty_worker_result(contract_path, final=final)
-        result.pop("task")
+        result.pop("task", None)
         result["checks"].append(check_result("contract", "FAIL", str(exc)))
         return finalize_worker_result(result)

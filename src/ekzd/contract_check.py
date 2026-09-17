@@ -20,7 +20,7 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
     Neither current project TOML nor authoring task files are consulted here.
     """
     result = empty_worker_result(Path("<frozen-contract>"), final=final)
-    result.pop("task")
+    result.pop("task", None)
     result["contract_id"] = contract_id(contract)
     result["baseline"] = contract.get("baseline")
 

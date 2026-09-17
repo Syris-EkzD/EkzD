@@ -5,7 +5,6 @@ from typing import Any
 
 from . import __version__
 from .identity import BuildIdentityUnavailable, runtime_identity
-from .task import task_identity
 
 CHECK_STATES = frozenset({"PASS", "FAIL", "UNAVAILABLE", "WARN"})
 
@@ -59,7 +58,8 @@ def empty_worker_result(
         "ready": False,
         "mode": "final" if final else "development",
         "ekzd": ekzd_identity if ekzd_identity is not None else _best_effort_runtime_identity(),
-        "task": {"path": str(task_path.expanduser().resolve()), "sha256": None},
+        "contract_path": str(task_path.expanduser().resolve()),
+        "contract_id": None,
         "baseline": None,
         "git": {
             "head": None,
@@ -73,7 +73,7 @@ def empty_worker_result(
 
 def unavailable_worker_result(task_path: Path, *, final: bool, message: str) -> dict[str, Any]:
     result = empty_worker_result(task_path, final=final)
-    result["task"] = task_identity(task_path)
+    result["contract_path"] = str(task_path.expanduser().resolve())
     result["checks"].append(check_result("worker-check", "UNAVAILABLE", message))
     return finalize_worker_result(result)
 
@@ -88,9 +88,8 @@ def render_worker_check(result: dict[str, Any]) -> str:
     if ekzd.get("version"):
         lines.append(f"ekzd    {ekzd['version']}")
     lines.append(f"build   {ekzd.get('build_sha256') or 'unavailable'}")
-    task = result.get("task", {})
-    if task.get("sha256"):
-        lines.append(f"task    {task['sha256']}")
+    if result.get("contract_id"):
+        lines.append(f"contract {result['contract_id']}")
     if result.get("baseline"):
         lines.append(f"base    {result['baseline']}")
     git = result.get("git", {})
