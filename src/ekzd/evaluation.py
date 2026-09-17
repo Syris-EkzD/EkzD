@@ -8,7 +8,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal
 
 from .candidate import Candidate, capture_candidate, require_final
 from .core import HarnessError
@@ -407,11 +407,20 @@ def evaluate_candidate(
     mode: EvaluationMode,
     implementation_branch: str | None = None,
     expected_candidate: Candidate | None = None,
+    authority_guard: Callable[[], None] | None = None,
 ) -> EvaluationResult:
+    def capture_bound_candidate() -> Candidate:
+        if authority_guard is not None:
+            authority_guard()
+        candidate = capture_candidate(root)
+        if authority_guard is not None:
+            authority_guard()
+        return candidate
+
     collected: list[StepEvidence] = []
     if expected_candidate is None:
         try:
-            candidate = capture_candidate(root)
+            candidate = capture_bound_candidate()
         except HarnessError as exc:
             return EvaluationResult(
                 mode=mode,
@@ -432,7 +441,7 @@ def evaluate_candidate(
     else:
         candidate = expected_candidate
         try:
-            if capture_candidate(root) != candidate:
+            if capture_bound_candidate() != candidate:
                 message = "Candidate changed between evaluation boundaries."
                 return EvaluationResult(
                     mode=mode,
@@ -493,7 +502,7 @@ def evaluate_candidate(
 
     for step in steps:
         try:
-            if capture_candidate(root) != candidate:
+            if capture_bound_candidate() != candidate:
                 message = "Candidate changed between evaluation boundaries."
                 collected.append(
                     StepEvidence(
@@ -522,7 +531,7 @@ def evaluate_candidate(
 
         evidence = run_verification_step(root, step)
         try:
-            if capture_candidate(root) != candidate:
+            if capture_bound_candidate() != candidate:
                 message = "Verification command changed candidate state; mutation left untouched."
                 evidence = StepEvidence(
                     name=evidence.name,
@@ -564,7 +573,7 @@ def evaluate_candidate(
 
     final_binding_error: str | None = None
     try:
-        if capture_candidate(root) != candidate:
+        if capture_bound_candidate() != candidate:
             final_binding_error = "Candidate changed during verification; result remains bound to the initial state."
             collected.append(
                 StepEvidence(

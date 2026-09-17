@@ -9,10 +9,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ekzd import core, worker
+from ekzd import core, worker, session, contract_check
 from ekzd.candidate import capture_candidate
-from ekzd.workflow import build_worker_task_manifest, build_workflow_status, start_reproducible_session
-from test_merge_hardening import config_text
+from ekzd.workflow import export_contract, build_workflow_status
+from phase3_helpers import project_text, task_text, freeze
 
 
 class CandidateStateTests(unittest.TestCase):
@@ -26,10 +26,10 @@ class CandidateStateTests(unittest.TestCase):
         self.git('config', 'user.name', 'Test')
         self.git('config', 'user.email', 'test@example.invalid')
         (self.root / '.ekzd').mkdir()
-        (self.root / '.gitignore').write_text('.ekzd/session.json\n')
+        (self.root / '.gitignore').write_text('.ekzd/local/\n')
         (self.root / 'README.md').write_text('good\n')
         self.config = self.root / '.ekzd/project.toml'
-        self.config.write_text(config_text(include=['*'], max_commits=20))
+        self.config.write_text(project_text())
         self.commit('baseline')
         self.task = self.base / 'task.toml'
 
@@ -42,22 +42,22 @@ class CandidateStateTests(unittest.TestCase):
 
     def start(self, commands: list[list[str]] | None = None) -> None:
         if commands:
-            text = config_text(include=['*'], max_commits=20, command=commands[0])
+            text = project_text(commands=[commands[0]])
             for number, command in enumerate(commands[1:], 1):
-                text += f'\n[[verification.steps]]\nname = "step-{number}"\ncommand = {json.dumps(command)}\n'
+                text += f'\n[[verification]]\nname = "step-{number}"\ncommand = {json.dumps(command)}\n'
             self.config.write_text(text)
             self.commit('verification plan')
-        start_reproducible_session(self.root, 'Test candidate', implementation_branch='feat/task')
-        self.task.write_text(build_worker_task_manifest(self.root))
+        freeze(self.root, sources=['README.md'])
+        self.task.write_text(export_contract(self.root))
         self.git('checkout', '-qb', 'feat/task')
 
-    def assert_both_reject(self, message: str | None = None) -> None:
-        with self.assertRaises(core.HarnessError) as raised:
-            core.verify_session(self.root)
+    def assert_both_reject(self, message=None):
+        verification = session.verify_session(self.root)
+        self.assertFalse(verification['passed'], verification)
         result = worker.run_worker_check(self.root, self.task, final=True)
         self.assertFalse(result['ready'], result)
         if message:
-            self.assertIn(message, str(raised.exception))
+            self.assertIn(message, json.dumps(verification))
             self.assertIn(message, json.dumps(result))
 
     def test_clean_final_candidate_passes_and_accepts_exact_head(self) -> None:
@@ -65,8 +65,8 @@ class CandidateStateTests(unittest.TestCase):
         (self.root / 'README.md').write_text('implemented\n')
         self.commit()
         self.assertTrue(worker.run_worker_check(self.root, self.task, final=True)['ready'])
-        self.assertTrue(core.verify_session(self.root)['passed'])
-        accepted = core.finish_session(self.root, accept=True)
+        self.assertTrue(session.verify_session(self.root)['passed'])
+        accepted = session.finish_session(self.root, accept=True)
         self.assertEqual(self.git('rev-parse', 'HEAD'), accepted['acceptance']['head'])
 
     def test_cli_worker_and_maintainer_accept_same_committed_candidate(self) -> None:
@@ -74,22 +74,24 @@ class CandidateStateTests(unittest.TestCase):
         def cli(*args):
             return subprocess.run([sys.executable, '-m', 'ekzd.cli', *args], cwd=self.root,
                                   env=env, text=True, capture_output=True)
-        self.assertEqual(0, cli('start', 'CLI candidate', '--branch', 'feat/task').returncode)
-        exported = cli('task')
+        draft = self.base / 'draft.toml'
+        draft.write_text(task_text())
+        self.assertEqual(0, cli('start', str(draft)).returncode)
+        exported = cli('contract')
         self.assertEqual(0, exported.returncode, exported.stderr)
         self.task.write_text(exported.stdout)
         self.assertNotEqual(0, cli('verify').returncode)  # Still on main.
         self.git('checkout', '-qb', 'feat/task')
         (self.root / 'README.md').write_text('implemented')
         self.commit()
-        checked = cli('check', '--final', '--task', str(self.task), '--json')
+        checked = cli('check', '--final', '--contract', str(self.task), '--json')
         self.assertEqual(0, checked.returncode, checked.stdout + checked.stderr)
         self.assertTrue(json.loads(checked.stdout)['ready'])
         verified = cli('verify')
         self.assertEqual(0, verified.returncode, verified.stdout + verified.stderr)
         accepted = cli('finish', '--accept')
         self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
-        self.assertEqual(self.git('rev-parse', 'HEAD'), core.read_state(self.root)['acceptance']['head'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), session.read_state(self.root)['acceptance']['head'])
 
     def test_later_successful_command_mutation_invalidates_earlier_check(self) -> None:
         self.start([
@@ -97,13 +99,12 @@ class CandidateStateTests(unittest.TestCase):
             ['python3', '-c', "open('README.md', 'w').write('bad\\n')"],
             ['python3', '-c', "open('should-not-run', 'w').write('bad')"],
         ])
-        with self.assertRaisesRegex(core.HarnessError, 'Candidate changed'):
-            core.verify_session(self.root)
+        self.assertFalse(session.verify_session(self.root)['passed'])
         self.assertEqual('bad\n', (self.root / 'README.md').read_text())
         self.assertFalse((self.root / 'should-not-run').exists())
-        self.assertIsNone(core.read_state(self.root)['verification'])
+        self.assertFalse(session.read_state(self.root)['verification']['passed'])
         with self.assertRaises(core.HarnessError):
-            core.finish_session(self.root, accept=True)
+            session.finish_session(self.root, accept=True)
         self.git('restore', 'README.md')
         result = worker.run_worker_check(self.root, self.task, final=True)
         self.assertFalse(result['ready'])
@@ -112,7 +113,7 @@ class CandidateStateTests(unittest.TestCase):
 
     def test_failed_retry_cannot_leave_prior_success_available(self) -> None:
         self.start()
-        self.assertTrue(core.verify_session(self.root)['passed'])
+        self.assertTrue(session.verify_session(self.root)['passed'])
         from ekzd import evaluation
         original = evaluation.run_verification_step
         def mutate_after_check(*args, **kwargs):
@@ -120,40 +121,35 @@ class CandidateStateTests(unittest.TestCase):
             (self.root / 'README.md').write_text('changed by check')
             return result
         with mock.patch.object(evaluation, 'run_verification_step', side_effect=mutate_after_check):
-            with self.assertRaises(core.HarnessError):
-                core.verify_session(self.root)
+            self.assertFalse(session.verify_session(self.root)['passed'])
         self.git('restore', 'README.md')
         with self.assertRaisesRegex(core.HarnessError, 'verification has not passed'):
-            core.finish_session(self.root, accept=True)
+            session.finish_session(self.root, accept=True)
 
     def test_worker_mutation_after_step_boundary_cannot_be_rebound(self) -> None:
         self.start()
-        original = worker.evaluate_candidate
+        original = contract_check.evaluate_candidate
         def late_change(*args, **kwargs):
             result = original(*args, **kwargs)
             (self.root / 'README.md').write_text('late change\n')
             return result
-        with mock.patch.object(worker, 'evaluate_candidate', side_effect=late_change):
+        with mock.patch.object(contract_check, 'evaluate_candidate', side_effect=late_change):
             result = worker.run_worker_check(self.root, self.task, final=True)
         self.assertFalse(result['ready'])
         self.assertIn('Candidate changed', json.dumps(result))
         self.assertTrue(result['git']['clean'])  # Still identifies the initial candidate.
 
-    def test_maintainer_mutation_at_completion_cannot_be_rebound(self) -> None:
+    def test_maintainer_mutation_at_completion_cannot_be_rebound(self):
         self.start()
-        original = core.enforce_scope
-        calls = 0
+        original = contract_check.check_contract
         def late_change(*args, **kwargs):
-            nonlocal calls
             result = original(*args, **kwargs)
-            calls += 1
-            if calls == 2:
-                (self.root / 'README.md').write_text('late change\n')
+            (self.root / 'README.md').write_text('late change')
             return result
-        with mock.patch.object(core, 'enforce_scope', side_effect=late_change):
+        with mock.patch.object(contract_check, 'check_contract', side_effect=late_change):
             with self.assertRaisesRegex(core.HarnessError, 'Candidate changed'):
-                core.verify_session(self.root)
-        self.assertIsNone(core.read_state(self.root)['verification'])
+                session.verify_session(self.root)
+        self.assertIsNone(session.read_state(self.root)['verification'])
 
     def test_final_rejects_wrong_branch_and_detached_head(self) -> None:
         self.start()
@@ -230,7 +226,7 @@ class CandidateStateTests(unittest.TestCase):
         self.assertIn(unusual.name, deleted.changed_paths)
 
     def test_ignored_artifacts_are_excluded_but_ignored_tracked_files_are_bound(self) -> None:
-        (self.root / '.gitignore').write_text('.ekzd/session.json\ncache/\nREADME.md\n')
+        (self.root / '.gitignore').write_text('.ekzd/local/\ncache/\nREADME.md\n')
         self.commit('ignore rules')
         cache = self.root / 'cache'
         cache.mkdir()
@@ -240,10 +236,10 @@ class CandidateStateTests(unittest.TestCase):
         (self.root / 'README.md').write_text('tracked despite ignore rule')
         self.assertNotEqual(before.fingerprint, capture_candidate(self.root).fingerprint)
 
-    def test_legacy_session_without_declared_branch_cannot_verify(self) -> None:
-        core.start_session(self.root, 'legacy')
-        with self.assertRaisesRegex(core.HarnessError, 'lacks a declared implementation branch'):
-            core.verify_session(self.root)
+    def test_legacy_session_without_declared_branch_cannot_verify(self):
+        (self.root / '.ekzd/session.json').write_text('{}')
+        with self.assertRaisesRegex(core.HarnessError, 'Unsupported legacy'):
+            session.verify_session(self.root)
 
     def test_staging_is_bound_even_when_working_bytes_are_restored(self) -> None:
         first = capture_candidate(self.root)
@@ -342,10 +338,10 @@ class CandidateStateTests(unittest.TestCase):
         self.start()
         self.git('rm', '-q', 'README.md'); self.git('commit', '-qm', 'delete source')
         self.assertTrue(worker.run_worker_check(self.root, self.task, final=True)['ready'])
-        self.assertTrue(core.verify_session(self.root)['passed'])
-        self.assertIn('README.md', core.build_context(self.root)['sources']['paths'])
-        self.assertEqual(self.task.read_text(), build_worker_task_manifest(self.root))
-        core.finish_session(self.root, accept=True)
+        self.assertTrue(session.verify_session(self.root)['passed'])
+        self.assertIn('README.md', session.active_state(self.root)['contract']['sources'])
+        self.assertEqual(self.task.read_text(), export_contract(self.root))
+        session.finish_session(self.root, accept=True)
 
     def test_missing_baseline_source_is_rejected(self) -> None:
         self.git('rm', '-q', 'README.md'); self.git('commit', '-qm', 'missing source')
@@ -354,38 +350,38 @@ class CandidateStateTests(unittest.TestCase):
 
     def test_acceptance_rejects_changed_head_branch_dirty_state_and_contract(self) -> None:
         self.start()
-        core.verify_session(self.root)
+        session.verify_session(self.root)
         original_head = self.git('rev-parse', 'HEAD')
         self.git('commit', '--allow-empty', '-qm', 'different commit')
-        with self.assertRaises(core.HarnessError): core.finish_session(self.root, accept=True)
+        with self.assertRaises(core.HarnessError): session.finish_session(self.root, accept=True)
         self.git('reset', '--hard', original_head)
         self.git('checkout', '-q', 'main')
-        with self.assertRaises(core.HarnessError): core.finish_session(self.root, accept=True)
+        with self.assertRaises(core.HarnessError): session.finish_session(self.root, accept=True)
         self.git('checkout', '-q', 'feat/task')
         (self.root / 'README.md').write_text('dirty')
         self.assertEqual('stale', build_workflow_status(self.root)['verification'])
-        with self.assertRaises(core.HarnessError): core.finish_session(self.root, accept=True)
+        with self.assertRaises(core.HarnessError): session.finish_session(self.root, accept=True)
         self.git('restore', 'README.md')
         self.config.write_text(self.config.read_text() + '\n# changed contract\n')
-        with self.assertRaises(core.HarnessError): core.finish_session(self.root, accept=True)
+        with self.assertRaises(core.HarnessError): session.finish_session(self.root, accept=True)
 
     def test_stale_verified_contract_digest_blocks_acceptance(self) -> None:
         self.start()
-        core.verify_session(self.root)
-        state = core.read_state(self.root)
-        state['verification']['config_digest'] = '0' * 64
-        core.write_state(self.root, state)
-        with self.assertRaisesRegex(core.HarnessError, 'configuration changed after verification'):
-            core.finish_session(self.root, accept=True)
+        session.verify_session(self.root)
+        state = session.read_state(self.root)
+        state['verification']['contract_id'] = '0' * 64
+        session.write_state(self.root, state)
+        with self.assertRaisesRegex(core.HarnessError, 'stale candidate/contract'):
+            session.finish_session(self.root, accept=True)
 
     def test_old_or_modified_evidence_cannot_be_accepted(self) -> None:
         self.start()
-        core.verify_session(self.root)
-        state = core.read_state(self.root)
+        session.verify_session(self.root)
+        state = session.read_state(self.root)
         state['verification'].pop('candidate')
-        core.write_state(self.root, state)
-        with self.assertRaisesRegex(core.HarnessError, 'predates candidate binding'):
-            core.finish_session(self.root, accept=True)
+        session.write_state(self.root, state)
+        with self.assertRaisesRegex(core.HarnessError, 'stale candidate/contract'):
+            session.finish_session(self.root, accept=True)
 
 
 if __name__ == '__main__':

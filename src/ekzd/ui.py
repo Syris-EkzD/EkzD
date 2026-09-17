@@ -148,13 +148,13 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
             _field("verification", _verification_value(verification, enabled=enabled), enabled=enabled),
             "",
             _section("Branches", enabled=enabled),
-            _meta("baseline", str(status["baseline_branch"]), enabled=enabled),
+            _meta("baseline", str(status.get("baseline_branch", "(frozen commit)")), enabled=enabled),
             _field("implementation", str(status["implementation_branch"]), enabled=enabled),
-            _meta("current", str(status["current_branch"]), enabled=enabled),
+            _meta("current", str(status.get("current_branch", "unavailable")), enabled=enabled),
             "",
             _section("Repository", enabled=enabled),
             _meta("baseline HEAD", str(status["baseline_head"])[:12], enabled=enabled),
-            _meta("worktree", "clean" if status["worktree_clean"] else "changed", enabled=enabled),
+            _meta("worktree", "clean" if status.get("worktree_clean", False) else "changed", enabled=enabled),
         ]
     )
     commit_count = status.get("commit_count")
@@ -176,8 +176,8 @@ def render_verification_ui(verification: dict[str, Any], *, enabled: bool) -> st
         lines.extend(_list_items([], enabled=enabled))
     else:
         for step in steps:
-            message = str(step["name"])
-            lines.append(f"  {success(message, enabled=enabled) if step['passed'] else failure(message, enabled=enabled)}")
+            message = str(step["name"]) + (": " + step["message"] if step.get("message") else "")
+            lines.append(f"  {success(message, enabled=enabled) if step.get('passed', step.get('status') == 'PASS') else failure(message, enabled=enabled)}")
 
     passed = bool(verification.get("passed"))
     lines.extend(

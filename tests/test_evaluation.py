@@ -9,10 +9,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from ekzd import core, worker
+from ekzd import core, worker, session
 import ekzd.evaluation as evaluation
 from ekzd.evaluation import OUTPUT_LIMIT, VerificationStep, evaluate_candidate, run_verification_step
-from ekzd.workflow import build_worker_task_manifest, start_reproducible_session
+from ekzd.workflow import export_contract
+from phase3_helpers import freeze
 
 
 class EvaluationPhase2Tests(unittest.TestCase):
@@ -26,7 +27,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
         self.git("config", "user.name", "EkzD Test")
         self.git("config", "user.email", "ekzd@example.invalid")
         (self.root / ".ekzd").mkdir()
-        (self.root / ".gitignore").write_text(".ekzd/session.json\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text(".ekzd/local/\n", encoding="utf-8")
         (self.root / "allowed.txt").write_text("baseline\n", encoding="utf-8")
         self.config = self.root / ".ekzd/project.toml"
         self.task = self.base / "task.toml"
@@ -42,37 +43,11 @@ class EvaluationPhase2Tests(unittest.TestCase):
         return "[" + ", ".join(json.dumps(value) for value in values) + "]"
 
     def write_config(self, steps: list[tuple[str, list[str], str, int]]) -> None:
-        lines = [
-            "schema_version = 1",
-            "",
-            "[project]",
-            'name = "Demo"',
-            "",
-            "[sources]",
-            'paths = ["allowed.txt"]',
-            "",
-            "[scope]",
-            'include = ["*"]',
-            "exclude = []",
-            "constraints = []",
-            "",
-            "[authority]",
-            "may = []",
-            "requires_approval = []",
-            "may_not = []",
-            "",
-            "[session]",
-            "max_commits = 20",
-            "",
-            "[acceptance]",
-            'criteria = ["verification"]',
-            "",
-            "[verification]",
-        ]
+        lines = ['schema_version = 2', 'name = "Demo"']
         for name, command, cwd, timeout in steps:
             lines += [
                 "",
-                "[[verification.steps]]",
+                "[[verification]]",
                 f"name = {json.dumps(name)}",
                 f"command = {self.toml_array(command)}",
                 f"cwd = {json.dumps(cwd)}",
@@ -85,19 +60,15 @@ class EvaluationPhase2Tests(unittest.TestCase):
             steps = [("baseline", [sys.executable, "-c", "pass"], ".", 30)]
         self.write_config(steps)
         self.commit("baseline")
-        start_reproducible_session(self.root, "phase 2", implementation_branch="feat/task")
-        self.task.write_text(build_worker_task_manifest(self.root))
+        freeze(self.root, sources=["allowed.txt"])
+        self.task.write_text(export_contract(self.root))
         self.git("checkout", "-q", "-b", "feat/task")
 
     def classifications(self) -> tuple[list[str], list[str], dict]:
-        verification = core.verify_session(self.root)
-        maintainer = [step.get("status", "PASS" if step["passed"] else "FAIL") for step in verification["steps"]]
+        verification = session.verify_session(self.root)
+        maintainer = [s['status'] for s in verification['steps'] if s['name'].startswith('verification:') or s['name'] == 'state-binding']
         checked = worker.run_worker_check(self.root, self.task, final=True)
-        worker_steps = [
-            item["status"]
-            for item in checked["checks"]
-            if item["name"].startswith("project:") or item["name"] == "state-binding"
-        ]
+        worker_steps = [s['status'] for s in checked['checks'] if s['name'].startswith('verification:') or s['name'] == 'state-binding']
         return maintainer, worker_steps, checked
 
     def test_worker_and_maintainer_share_success_nonzero_missing_timeout_and_cwd_classifications(self) -> None:
@@ -115,7 +86,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
         maintainer, worker_steps, checked = self.classifications()
 
         self.assertEqual(["PASS", "FAIL", "UNAVAILABLE", "UNAVAILABLE", "FAIL"], maintainer[:5])
-        self.assertEqual(maintainer, worker_steps[:5])
+        self.assertEqual(maintainer, worker_steps)
         self.assertFalse(checked["ready"])
 
     def test_shared_clean_final_candidate_passes(self) -> None:
@@ -123,7 +94,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
 
         maintainer, worker_steps, checked = self.classifications()
 
-        self.assertTrue(core.read_state(self.root)["verification"]["passed"])
+        self.assertTrue(session.read_state(self.root)["verification"]["passed"])
         self.assertTrue(checked["ready"])
         self.assertEqual(["PASS"], maintainer[:1])
         self.assertEqual(["PASS"], worker_steps[:1])
@@ -132,8 +103,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
         self.freeze([("ok", [sys.executable, "-c", "print('ok')"], ".", 30)])
         self.git("config", "core.sparseCheckout", "true")
 
-        with self.assertRaisesRegex(core.HarnessError, "Sparse checkout"):
-            core.verify_session(self.root)
+        self.assertFalse(session.verify_session(self.root)['passed'])
         checked = worker.run_worker_check(self.root, self.task, final=True)
         self.assertFalse(checked["ready"])
         self.assertIn("Sparse checkout", json.dumps(checked))
@@ -353,37 +323,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
         self.assertEqual("PASS", result.status)
         self.assertIn("valid\ufffdtail", result.stdout)
 
-    def test_project_config_rejects_unknown_keys(self) -> None:
-        self.write_config([])
-        data = self.config.read_text(encoding="utf-8")
-        cases = [
-            (data.replace("\n[project]\n", "\nunknown = true\n\n[project]\n"), "project configuration contains unknown key: unknown"),
-            (data.replace("exclude = []", "excludes = []"), "scope contains unknown key: excludes"),
-            (data + '\n[[verification.steps]]\nname = "bad"\ncommand = ["true"]\ntimeout_secondz = 1\n', "verification.steps[0] contains unknown key"),
-        ]
-        for text, message in cases:
-            with self.subTest(message=message):
-                self.config.write_text(text, encoding="utf-8")
-                with self.assertRaises(core.HarnessError) as raised:
-                    core.load_config(self.root)
-                self.assertIn(message, str(raised.exception))
 
-    def test_task_manifest_rejects_unknown_keys(self) -> None:
-        self.write_config([("baseline", [sys.executable, "-c", "pass"], ".", 30)])
-        self.commit("baseline")
-        start_reproducible_session(self.root, "phase 2", implementation_branch="feat/task")
-        manifest = build_worker_task_manifest(self.root)
-        cases = [
-            (manifest.replace("\nobjective = ", "\nunknown = true\nobjective = ", 1), "task manifest contains unknown key"),
-            (manifest.replace("exclude = []", "excludes = []"), "task scope contains unknown key: excludes"),
-            (manifest + '\n[[verification.steps]]\nname = "bad"\ncommand = ["true"]\ntimeout_secondz = 1\n', "verification.steps[0] contains unknown key"),
-        ]
-        for text, message in cases:
-            with self.subTest(message=message):
-                self.task.write_text(text, encoding="utf-8")
-                checked = worker.run_worker_check(self.root, self.task, final=True)
-                self.assertFalse(checked["ready"])
-                self.assertIn(message, json.dumps(checked))
 
 
 if __name__ == "__main__":

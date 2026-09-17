@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .core import HarnessError, STATE_RELATIVE, ensure_git_visibility_supported, run_git, run_git_bytes
+from .core import HarnessError, ensure_git_visibility_supported, run_git, run_git_bytes
 
 
 _OPERATIONS = (
@@ -100,7 +100,7 @@ def _untracked(root: Path, tracked: set[bytes]) -> set[bytes]:
                 if nested_git.exists() or nested_git.is_symlink():
                     raise HarnessError(f"Nested repositories are unsupported: {os.fsdecode(raw)!r}")
                 stack.append(Path(entry.path))
-            elif raw not in tracked and raw != os.fsencode(STATE_RELATIVE):
+            elif raw not in tracked:
                 paths.add(raw)
     return paths
 

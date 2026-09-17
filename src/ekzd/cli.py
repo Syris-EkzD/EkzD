@@ -8,20 +8,14 @@ from pathlib import Path
 from .check import render_worker_check, unavailable_worker_result
 from .core import (
     HarnessError,
-    abort_session,
-    build_context,
     find_root,
-    finish_session,
     init_project,
-    read_state,
-    verify_session,
 )
 from .identity import BuildIdentityUnavailable, runtime_identity
-from .task import write_task_manifest_file
+from .session import abort_session, finish_session, start_session, verify_session
 from .ui import (
     failure,
     render_command_summary,
-    render_context_ui,
     render_status_ui,
     render_verification_ui,
     supports_color,
@@ -29,9 +23,8 @@ from .ui import (
 from .worker import run_worker_check
 from .workflow import (
     build_implementation_prompt,
-    build_worker_task_manifest,
+    export_contract,
     build_workflow_status,
-    start_reproducible_session,
 )
 
 
@@ -49,31 +42,17 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--name")
 
     start = sub.add_parser("start", help="Start a scoped work session.")
-    start.add_argument("objective")
-    start.add_argument(
-        "--branch",
-        required=True,
-        dest="implementation_branch",
-        help="Dedicated implementation/task branch to use from the frozen baseline.",
-    )
+    start.add_argument("task_file", type=Path, help="Disposable task-authoring TOML file.")
 
     sub.add_parser("status", help="Show the active workflow state and next action.")
     sub.add_parser("prompt", help="Render the frozen implementation handoff for the active session.")
 
-    task = sub.add_parser("task", help="Export the canonical schema-v2 worker task for the active session.")
-    task.add_argument(
-        "--output",
-        type=Path,
-        help="Write the canonical task manifest to an external file instead of stdout.",
-    )
-
-    context = sub.add_parser("context", help="Render project and session context.")
-    context.add_argument("--json", action="store_true", dest="as_json")
+    sub.add_parser("contract", help="Temporary JSON export of the active frozen contract to stdout.")
 
     sub.add_parser("verify", help="Run configured verification and bind the result to current state.")
 
-    check = sub.add_parser("check", help="Run stateless worker checks from a standalone task manifest.")
-    check.add_argument("--task", required=True, type=Path, help="Path to the standalone task TOML manifest.")
+    check = sub.add_parser("check", help="Run stateless worker checks from a frozen contract.")
+    check.add_argument("--contract", required=True, type=Path, help="Path to the canonical frozen JSON contract.")
     check.add_argument("--final", action="store_true", help="Require a clean final handoff candidate.")
     check.add_argument("--json", action="store_true", dest="as_json", help="Emit one structured JSON result.")
 
@@ -107,9 +86,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "check":
         try:
             root = find_root(Path.cwd())
-            result = run_worker_check(root, args.task, final=args.final)
+            result = run_worker_check(root, args.contract, final=args.final)
         except (HarnessError, OSError) as exc:
-            result = unavailable_worker_result(args.task, final=args.final, message=str(exc))
+            result = unavailable_worker_result(args.contract, final=args.final, message=str(exc))
         if args.as_json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
@@ -126,28 +105,24 @@ def main(argv: list[str] | None = None) -> int:
                     "Project harness created",
                     tone="success",
                     details=[("path", str(path.relative_to(root)))],
-                    next_action="Configure scope, acceptance, and verification before starting a session.",
+                    next_action="Configure durable project verification/protections once, commit policy, then write a local task.",
                     enabled=color,
                 ),
                 end="",
             )
             return 0
         if args.command == "start":
-            state = start_reproducible_session(
-                root,
-                args.objective,
-                implementation_branch=args.implementation_branch,
-            )
+            state = start_session(root, args.task_file)
             print(
                 render_command_summary(
                     "session",
                     "Session started",
                     tone="success",
                     details=[
-                        ("objective", str(state["objective"])),
-                        ("implementation branch", str(state["workflow"]["implementation_branch"])),
+                        ("objective", str(state["contract"]["objective"])),
+                        ("implementation branch", str(state["contract"]["branch"])),
                     ],
-                    next_action="Run `ekzd status`, generate the semantic handoff with `ekzd prompt`, or export the worker task with `ekzd task`.",
+                    next_action="Export `ekzd contract` to .ekzd/local/contract.json and use `ekzd prompt` for worker instructions.",
                     enabled=color,
                 ),
                 end="",
@@ -155,29 +130,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "status":
             status = build_workflow_status(root)
-            if status.get("session_status") == "finished":
-                state = read_state(root)
-                project = state.get("project") if state else None
-                if project:
-                    status = {**status, "project": project}
             print(render_status_ui(status, enabled=color), end="")
             return 0
         if args.command == "prompt":
             print(build_implementation_prompt(root), end="")
             return 0
-        if args.command == "task":
-            manifest = build_worker_task_manifest(root)
-            if args.output is None:
-                sys.stdout.write(manifest)
-            else:
-                write_task_manifest_file(root, args.output, manifest)
-            return 0
-        if args.command == "context":
-            context = build_context(root)
-            if args.as_json:
-                print(json.dumps(context, indent=2, sort_keys=True))
-            else:
-                print(render_context_ui(context, enabled=color), end="")
+        if args.command == "contract":
+            sys.stdout.write(export_contract(root))
             return 0
         if args.command == "verify":
             verification = verify_session(root)
@@ -190,8 +149,8 @@ def main(argv: list[str] | None = None) -> int:
                     "session",
                     "Session aborted without acceptance",
                     tone="warning",
-                    details=[("objective", str(state["objective"]))],
-                    next_action='Start a fresh task with `ekzd start "<objective>" --branch <task-branch>` when ready.',
+                    details=[("objective", str(state["contract"]["objective"]))],
+                    next_action='Start a fresh task with `ekzd start task.toml` when ready.',
                     enabled=color,
                 ),
                 end="",
@@ -204,14 +163,14 @@ def main(argv: list[str] | None = None) -> int:
                     "session",
                     "Session accepted",
                     tone="success",
-                    details=[("objective", str(state["objective"]))],
+                    details=[("objective", str(state["contract"]["objective"]))],
                     enabled=color,
                 ),
                 end="",
             )
             return 0
         raise HarnessError(f"Unsupported command: {args.command}")
-    except HarnessError as exc:
+    except (HarnessError, OSError) as exc:
         error_color = supports_color(sys.stderr)
         print(failure(f"EkzD: {exc}", enabled=error_color), file=sys.stderr)
         return 1
