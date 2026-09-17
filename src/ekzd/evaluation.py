@@ -228,6 +228,16 @@ def _terminate_process_group(process: subprocess.Popen[bytes], pgid: int) -> str
     return "Verifier process group still exists after SIGKILL; cleanup cannot be trusted."
 
 
+def _cleanup_owned_process_group(process: subprocess.Popen[bytes], pgid: int | None) -> None:
+    if pgid is None:
+        try:
+            pgid = os.getpgid(process.pid)
+        except OSError:
+            return
+    if _process_group_active(pgid):
+        _terminate_process_group(process, pgid)
+
+
 def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
     try:
         command_cwd = _resolve_cwd(root, step.cwd)
@@ -293,7 +303,11 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
             if cleanup_error is not None:
                 break
             wait_time = max(0.0, min(0.05, remaining)) if not timed_out else 0.05
-            events = selector.select(wait_time) if selector.get_map() else []
+            if selector.get_map():
+                events = selector.select(wait_time)
+            else:
+                time.sleep(wait_time)
+                events = []
             if not events and timed_out and process.poll() is not None:
                 # Keep draining briefly after the process exits; EOF unregisters pipes.
                 pass
@@ -312,12 +326,8 @@ def run_verification_step(root: Path, step: VerificationStep) -> StepEvidence:
                         key.data.append(chunk)
                     selector.unregister(stream)
     except KeyboardInterrupt:
-        if process is not None and process.poll() is None:
-            try:
-                interrupt_pgid = pgid if pgid is not None else os.getpgid(process.pid)
-                _terminate_process_group(process, interrupt_pgid)
-            except OSError:
-                pass
+        if process is not None:
+            _cleanup_owned_process_group(process, pgid)
         raise
     finally:
         selector.close()

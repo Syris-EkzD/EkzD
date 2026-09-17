@@ -7,8 +7,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ekzd import core, worker
+import ekzd.evaluation as evaluation
 from ekzd.evaluation import OUTPUT_LIMIT, VerificationStep, evaluate_candidate, run_verification_step
 from ekzd.workflow import build_worker_task_manifest, start_reproducible_session
 
@@ -256,6 +258,56 @@ class EvaluationPhase2Tests(unittest.TestCase):
         self.assertFalse(result.timed_out)
         self.assertIn("process-group members", result.message)
         self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
+
+    def test_keyboard_interrupt_cleans_descendant_after_parent_exit(self) -> None:
+        marker = self.root / "allowed.txt"
+        child = "import time; time.sleep(1.5); open('allowed.txt','w').write('late mutation\\n')"
+        parent = (
+            "import subprocess, sys; "
+            f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+        )
+        self.freeze([])
+        calls = 0
+        original_sleep = evaluation.time.sleep
+
+        def interrupt_while_waiting(seconds: float) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise KeyboardInterrupt
+            original_sleep(seconds)
+
+        with mock.patch.object(evaluation.time, "sleep", side_effect=interrupt_while_waiting):
+            with self.assertRaises(KeyboardInterrupt):
+                run_verification_step(
+                    self.root,
+                    VerificationStep("interrupted-descendant", (sys.executable, "-c", parent), timeout_seconds=5),
+                )
+        time.sleep(1.8)
+
+        self.assertGreaterEqual(calls, 1)
+        self.assertEqual("baseline\n", marker.read_text(encoding="utf-8"))
+
+    def test_closed_pipes_waits_for_process_without_timeout(self) -> None:
+        self.freeze([])
+        code = (
+            "import os, time; "
+            "os.close(1); os.close(2); "
+            "time.sleep(0.2)"
+        )
+        started = time.monotonic()
+
+        result = run_verification_step(
+            self.root,
+            VerificationStep("closed-pipes", (sys.executable, "-c", code), timeout_seconds=2),
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertEqual("PASS", result.status)
+        self.assertFalse(result.timed_out)
+        self.assertGreaterEqual(elapsed, 0.15)
+        self.assertLess(elapsed, 1.5)
 
     def test_large_output_is_bounded_and_marked_truncated(self) -> None:
         self.freeze([])
