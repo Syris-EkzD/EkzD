@@ -412,7 +412,10 @@ def evaluate_candidate(
     def capture_bound_candidate() -> Candidate:
         if authority_guard is not None:
             authority_guard()
-        return capture_candidate(root)
+        candidate = capture_candidate(root)
+        if authority_guard is not None:
+            authority_guard()
+        return candidate
 
     collected: list[StepEvidence] = []
     if expected_candidate is None:

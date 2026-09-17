@@ -47,7 +47,7 @@ def _best_effort_runtime_identity() -> dict[str, str | None]:
 
 
 def empty_worker_result(
-    task_path: Path,
+    contract_path: Path | None = None,
     *,
     final: bool,
     ekzd_identity: dict[str, str | None] | None = None,
@@ -58,7 +58,7 @@ def empty_worker_result(
         "ready": False,
         "mode": "final" if final else "development",
         "ekzd": ekzd_identity if ekzd_identity is not None else _best_effort_runtime_identity(),
-        "contract_path": str(task_path.expanduser().resolve()),
+        "contract_path": str(contract_path.expanduser().resolve()) if contract_path is not None else None,
         "contract_id": None,
         "baseline": None,
         "git": {
@@ -71,9 +71,9 @@ def empty_worker_result(
     }
 
 
-def unavailable_worker_result(task_path: Path, *, final: bool, message: str) -> dict[str, Any]:
-    result = empty_worker_result(task_path, final=final)
-    result["contract_path"] = str(task_path.expanduser().resolve())
+def unavailable_worker_result(contract_path: Path, *, final: bool, message: str) -> dict[str, Any]:
+    result = empty_worker_result(contract_path, final=final)
+    result["contract_path"] = str(contract_path.expanduser().resolve())
     result["checks"].append(check_result("worker-check", "UNAVAILABLE", message))
     return finalize_worker_result(result)
 

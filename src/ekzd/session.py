@@ -27,7 +27,7 @@ def ensure_local(root: Path) -> None:
             raise HarnessError(f"Local EkzD state must not traverse symlinks: {relative}")
     if run_git(root, "ls-files", "--", LOCAL.as_posix()):
         raise HarnessError(".ekzd/local/ must remain untracked; remove it from the Git index.")
-    if (root / ".ekzd/session.json").exists():
+    if (root / ".ekzd/session.json").exists() or (root / ".ekzd/session.json").is_symlink():
         raise HarnessError(LEGACY_MESSAGE)
 
 
@@ -64,6 +64,12 @@ def read_state(root: Path) -> dict | None:
         raise HarnessError(f"Unable to read local session: {exc}") from exc
     if not isinstance(state, dict) or type(state.get("schema_version")) is not int or state["schema_version"] != SESSION_VERSION:
         raise HarnessError(LEGACY_MESSAGE)
+    allowed = {"schema_version", "status", "contract_id", "contract", "started_at", "verification", "acceptance", "aborted_at"}
+    if set(state) - allowed or not {"verification", "acceptance", "started_at"} <= set(state):
+        raise HarnessError("Invalid local session fields; remove the local record and refreeze.")
+    for key in ("verification", "acceptance"):
+        if state[key] is not None and not isinstance(state[key], dict):
+            raise HarnessError(f"Invalid local session {key} evidence; remove the local record and refreeze.")
     contract = validate_contract(state.get("contract"))
     if state.get("contract_id") != contract_id(contract):
         raise HarnessError("Frozen contract ID mismatch; abort/remove the local session and refreeze.")
@@ -110,24 +116,16 @@ def active_state(root: Path) -> dict:
     return state
 
 
-def require_runtime(contract: dict) -> None:
-    try:
-        identity = runtime_identity()
-    except BuildIdentityUnavailable as exc:
-        raise HarnessError(f"Exact runtime identity unavailable: {exc}") from exc
-    if identity != contract["ekzd"]:
-        raise HarnessError("Executing EkzD runtime does not match the frozen contract; use the pinned build.")
-
-
 def start_session(root: Path, task_path: Path) -> dict:
     with lifecycle_lock(root):
         existing = read_state(root)
         if existing and existing["status"] == "active":
             raise HarnessError("An active EkzD session already exists; abort or finish before refreezing.")
         # A local draft/lock must not dirty the reproducible candidate.
-        ignored = run_git(root, "check-ignore", "--", (LOCAL / "session.json").as_posix())
-        if not ignored:
-            raise HarnessError("Ignore .ekzd/local/ before starting a task.")
+        try:
+            run_git(root, "check-ignore", "--", LOCAL.as_posix() + "/")
+        except HarnessError as exc:
+            raise HarnessError("Ignore the entire .ekzd/local/ directory before starting a task.") from exc
         candidate = capture_candidate(root)
         if not candidate.clean:
             raise HarnessError("A clean working tree is required before freezing a reproducible baseline.")
@@ -169,6 +167,7 @@ def verify_session(root: Path) -> dict:
         guard()
         if result["ready"] and capture_candidate(root).binding() != result["git"]:
             raise HarnessError("Candidate changed before verification evidence could be recorded.")
+        guard()
         verification = {"verified_at": utc_now(), "passed": result["ready"], "status": result["overall_status"],
                         "contract_id": state["contract_id"], "candidate": result["git"], "steps": result["checks"]}
         state["verification"] = verification
@@ -188,7 +187,7 @@ def finish_session(root: Path, *, accept: bool) -> dict:
         candidate = capture_candidate(root)
         require_final(candidate, contract["branch"])
         verification = state.get("verification")
-        if not isinstance(verification, dict) or not verification.get("passed"):
+        if not isinstance(verification, dict) or verification.get("passed") is not True or verification.get("status") != "PASS":
             raise HarnessError("Acceptance blocked: verification has not passed.")
         if verification.get("contract_id") != state["contract_id"] or verification.get("candidate") != candidate.binding():
             raise HarnessError("Acceptance blocked: stale candidate/contract evidence; rerun verification.")

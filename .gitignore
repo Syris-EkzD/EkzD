@@ -4,3 +4,6 @@ __pycache__/
 .runs/
 .promotions/
 /.ekzd/local/
+
+# Keep obsolete local records private until the operator removes them.
+.ekzd/session.json

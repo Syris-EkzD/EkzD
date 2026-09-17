@@ -19,8 +19,7 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
     The caller owns the contract's provenance and any persistence/file guard.
     Neither current project TOML nor authoring task files are consulted here.
     """
-    result = empty_worker_result(Path("<frozen-contract>"), final=final)
-    result.pop("task", None)
+    result = empty_worker_result(final=final)
     result["contract_id"] = contract_id(contract)
     result["baseline"] = contract.get("baseline")
 
@@ -40,6 +39,12 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
         result["git"] = candidate.binding()
     except (HarnessError, BuildIdentityUnavailable, OSError) as exc:
         add("candidate-authority", "UNAVAILABLE", str(exc))
+        return finalize_worker_result(result)
+
+    try:
+        run_git(root, "cat-file", "-e", f"{contract['baseline']}^{{commit}}")
+    except (HarnessError, OSError) as exc:
+        add("baseline", "UNAVAILABLE", f"Frozen baseline commit is unavailable: {exc}")
         return finalize_worker_result(result)
 
     try:

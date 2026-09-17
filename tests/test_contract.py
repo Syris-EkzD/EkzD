@@ -70,3 +70,32 @@ class ContractTests(unittest.TestCase):
         c["scope"]["protected"] = []
         with self.assertRaises(HarnessError):
             validate_contract(c)
+
+    def test_canonical_json_rejects_formatting_duplicate_keys_and_legacy_inputs(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from ekzd.contract import load_contract
+        c = self.compose()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'contract.json'
+            for raw in (json.dumps(c).encode(), canonical_bytes(c).rstrip(b'\n'),
+                        b'{"contract_version":1,' + canonical_bytes(c)[1:], b'schema_version = 2\n'):
+                path.write_bytes(raw)
+                with self.assertRaises(HarnessError):
+                    load_contract(path)
+            c['objective'] = 'Validación — 注册'
+            path.write_bytes(canonical_bytes(c))
+            self.assertEqual(c, load_contract(path))
+            self.assertIn('注册'.encode(), path.read_bytes())
+
+    def test_unknown_fields_in_each_nested_contract_object(self):
+        for key in ('project', 'scope', 'ekzd'):
+            c = self.compose()
+            c[key]['typo'] = []
+            with self.assertRaisesRegex(HarnessError, 'typo'):
+                validate_contract(c)
+        c = self.compose()
+        c['verification'][0]['timeout'] = 5
+        with self.assertRaisesRegex(HarnessError, 'timeout'):
+            validate_contract(c)

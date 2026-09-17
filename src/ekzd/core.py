@@ -97,7 +97,7 @@ def ensure_tracked_paths_unfiltered(root: Path) -> None:
     filtered = filtered_tracked_paths(root)
     if filtered:
         raise HarnessError(
-            "Git content filters are unsupported for tracked files in EkzD V1; remove the filter attribute before continuing:\n- "
+            "Git content filters are unsupported for tracked files; remove the filter attribute before continuing:\n- "
             + "\n- ".join(filtered)
         )
 
@@ -116,7 +116,7 @@ def ensure_project_config_committed_clean(root: Path) -> None:
     tree_entry = run_git(root, "ls-tree", "HEAD", "--", path)
     if not tree_entry:
         raise HarnessError(
-            "Project harness configuration must be committed before starting or using an active session: "
+            "Project harness configuration must be committed before starting a task: "
             f"{path}"
         )
     mode = tree_entry.split(None, 1)[0]
@@ -129,7 +129,7 @@ def ensure_project_config_committed_clean(root: Path) -> None:
     staged = run_git(root, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--name-only", "--no-renames", "--", path)
     if unstaged or staged:
         raise HarnessError(
-            "Project harness configuration must remain clean while an EkzD session is active; "
+            "Project policy must be clean before freezing a task; "
             "abort the session, restore or commit the configuration outside the session, then start a fresh session."
         )
 

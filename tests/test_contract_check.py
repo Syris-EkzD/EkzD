@@ -82,3 +82,19 @@ class FrozenCheckTests(unittest.TestCase):
         for url in ("https://example.invalid/a", "git@example.invalid:a.git"):
             self.git("config", "remote.origin.url", url)
             self.assertTrue(run_worker_check(self.root, self.path, final=True)["ready"])
+
+    def test_missing_baseline_is_unavailable_before_verifiers(self):
+        c = self.freeze([dict(name='never', command=['python3', '-c', "open('later','w').write('bad')"])])
+        c['baseline'] = '0' * 40
+        self.path.write_bytes(canonical_bytes(c))
+        result = run_worker_check(self.root, self.path, final=True)
+        self.assertEqual('UNAVAILABLE', result['overall_status'])
+        self.assertFalse((self.root / 'later').exists())
+
+    def test_unavailable_runtime_blocks_before_verifiers(self):
+        from ekzd.identity import BuildIdentityUnavailable
+        self.freeze([dict(name='never', command=['python3', '-c', "open('later','w').write('bad')"])])
+        with mock.patch.object(contract_check, 'runtime_identity', side_effect=BuildIdentityUnavailable('missing source')):
+            result = run_worker_check(self.root, self.path, final=True)
+        self.assertEqual('UNAVAILABLE', result['overall_status'])
+        self.assertFalse((self.root / 'later').exists())

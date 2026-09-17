@@ -5,6 +5,7 @@ from .candidate import capture_candidate
 from .contract import canonical_bytes
 from .core import HarnessError, session_commit_count
 from .session import active_state, read_state
+from .identity import BuildIdentityUnavailable, runtime_identity
 
 
 def export_contract(root: Path) -> str:
@@ -39,6 +40,8 @@ def build_workflow_status(root: Path) -> dict:
                   max_commits=contract["max_commits"], verification="not run",
                   next="Export `ekzd contract` and `ekzd prompt`; work on the declared branch, then run `ekzd verify`.")
     try:
+        if runtime_identity() != contract["ekzd"]:
+            raise HarnessError("Executing runtime differs from the frozen contract; use the pinned build.")
         candidate = capture_candidate(root)
         count = session_commit_count(root, contract["baseline"])
         result.update(current_branch=candidate.branch, head=candidate.head, worktree_clean=candidate.clean, commit_count=count)
@@ -46,12 +49,12 @@ def build_workflow_status(root: Path) -> dict:
             raise HarnessError("Commit budget exceeded.")
         verification = state["verification"]
         if verification:
-            if not verification["passed"]:
+            if verification.get("passed") is not True or verification.get("status") != "PASS":
                 result.update(verification="failed", next="Fix the failure, then run `ekzd verify`.")
             elif verification["candidate"] != candidate.binding() or verification["contract_id"] != state["contract_id"]:
                 result.update(verification="stale", next="Candidate or contract changed; rerun `ekzd verify`.")
             else:
                 result.update(verification="passed", next="Review the exact candidate, then run `ekzd finish --accept`.")
-    except HarnessError as exc:
+    except (HarnessError, BuildIdentityUnavailable) as exc:
         result.update(verification="blocked", blocked_reason=str(exc), next="Resolve the reported repository blocker before verification.")
     return result

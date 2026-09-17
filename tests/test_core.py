@@ -84,3 +84,11 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertTrue(session.verify_session(self.root)['passed'])
         with self.assertRaisesRegex(core.HarnessError, 'explicit'):
             session.finish_session(self.root, accept=False)
+
+    def test_entire_local_directory_must_be_ignored(self):
+        self.ready()
+        (self.root / '.gitignore').write_text('.ekzd/local/session.json\n')
+        self.git('add', '.gitignore')
+        self.git('commit', '-qm', 'incomplete ignore')
+        with self.assertRaisesRegex(core.HarnessError, 'entire .ekzd/local/'):
+            freeze(self.root)

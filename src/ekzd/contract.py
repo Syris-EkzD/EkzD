@@ -78,8 +78,9 @@ def verification_steps(value: Any, *, required: bool = False) -> list[dict]:
 
 
 def parse_project(data: Any, *, ready: bool = True) -> dict:
+    if isinstance(data, dict):
+        _version(data.get("schema_version"), PROJECT_VERSION, "project schema")
     data = _object(data, {"schema_version", "name", "protected", "exclude", "guidance", "max_commits", "verification"}, "project")
-    _version(data.get("schema_version"), PROJECT_VERSION, "project schema")
     return {"schema_version": PROJECT_VERSION, "name": _text(data.get("name"), "project.name"),
             "protected": sorted(set(_strings(data.get("protected", []), "project.protected", paths=True))),
             "exclude": sorted(set(_strings(data.get("exclude", []), "project.exclude", paths=True))),
@@ -131,8 +132,9 @@ def _hex(value: Any, lengths: tuple[int, ...], label: str) -> str:
 
 
 def validate_contract(data: Any) -> dict:
+    if isinstance(data, dict):
+        _version(data.get("contract_version"), CONTRACT_VERSION, "contract")
     data = _object(data, {"contract_version", "baseline", "branch", "project", "objective", "scope", "sources", "acceptance", "guidance", "max_commits", "verification", "ekzd"}, "contract")
-    _version(data.get("contract_version"), CONTRACT_VERSION, "contract")
     _hex(data.get("baseline"), (40, 64), "contract.baseline")
     for key in ("branch", "objective"):
         _text(data.get(key), f"contract.{key}")
