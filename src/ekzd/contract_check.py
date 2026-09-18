@@ -86,7 +86,7 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
 
     # Preparation runs capability probes only. Every checking attempt repeats
     # them; success is never cached. Both passes use the same initial candidate.
-    groups = [("readiness", contract["readiness"])]
+    groups = [("readiness", contract["readiness"])] if contract["readiness"] or prepare else []
     if not prepare:
         groups.append(("verification", contract["verification"]))
     if not run_commands:
