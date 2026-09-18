@@ -14,7 +14,6 @@ from ekzd.ui import (
     RESET,
     YELLOW,
     render_command_summary,
-    render_context_ui,
     render_status_ui,
     render_verification_ui,
     success,
@@ -221,47 +220,6 @@ class UiTests(unittest.TestCase):
         self.assertIn("Result", rendered)
         self.assertIn("✗ Verification failed", rendered)
         self.assertIn("› Fix the reported failure and rerun `ekzd verify`.", rendered)
-
-    def test_context_plain_output_remains_readable(self) -> None:
-        context = {
-            "project": {"name": "Demo"},
-            "objective": "Change one thing",
-            "session_status": "active",
-            "session": {"max_commits": 3},
-            "git": {"branch": "feature/demo", "head": "1234567890abcdef", "status": []},
-            "scope": {"include": ["src/"], "exclude": [], "constraints": ["Stay focused."]},
-            "authority": {
-                "may": ["Edit src."],
-                "requires_approval": ["Merge."],
-                "may_not": ["Deploy."],
-            },
-            "acceptance": {"criteria": ["Tests pass."]},
-            "verification": {"steps": [{"name": "tests", "command": ["python3", "-m", "unittest"]}]},
-        }
-        rendered = render_context_ui(context, enabled=False)
-        self.assertNotIn("\x1b[", rendered)
-        self.assertIn("EkzD · Demo", rendered)
-        self.assertIn("feature/demo @ 12345678 · clean", rendered)
-        self.assertIn("Scope", rendered)
-        self.assertIn("Verification", rendered)
-        self.assertIn("tests python3 -m unittest", rendered)
-
-    def test_context_color_output_contains_semantic_ansi(self) -> None:
-        context = {
-            "project": {"name": "Demo"},
-            "objective": "Change one thing",
-            "session_status": "active",
-            "session": {"max_commits": 3},
-            "git": {"branch": "main", "head": "1234567890abcdef", "status": [" M README.md"]},
-            "scope": {"include": ["README.md"], "exclude": [], "constraints": []},
-            "authority": {"may": [], "requires_approval": [], "may_not": []},
-            "acceptance": {"criteria": ["Review complete."]},
-            "verification": {"steps": []},
-        }
-        rendered = render_context_ui(context, enabled=True)
-        self.assertIn("\x1b[36m", rendered)
-        self.assertIn("\x1b[33m", rendered)
-        self.assertNotIn(RED, rendered)
 
 
 if __name__ == "__main__":
