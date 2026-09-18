@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .check import check_result, empty_worker_result, finalize_worker_result, render_worker_check
 from .contract import contract_id, load_contract
-from .contract_check import check_contract
+from .worker import run_worker_check
 from .core import HarnessError, find_root
 
 
@@ -28,7 +28,7 @@ def main(handoff: Path, manifest: dict, payload_guard, argv=None) -> int:
         contract = load_contract(handoff / 'contract.json')
         if contract_id(contract) != manifest['contract_id'] or contract['ekzd'] != manifest['ekzd']:
             raise HarnessError('Handoff and contract identity differ.')
-        result = check_contract(find_root(), contract, final=args.final, prepare=args.command == 'prepare', authority_guard=guard)
+        result = run_worker_check(find_root(), handoff / "contract.json", final=args.final, prepare=args.command == 'prepare', authority_guard=guard)
         result['mode'] = 'prepare' if args.command == 'prepare' else result['mode']
     except (HarnessError, OSError) as exc:
         result = empty_worker_result(final=args.final)

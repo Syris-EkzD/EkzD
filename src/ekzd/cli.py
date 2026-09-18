@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
-from .check import render_worker_check, unavailable_worker_result
 from .core import (
     HarnessError,
     find_root,
     init_project,
 )
 from .identity import BuildIdentityUnavailable, runtime_identity
-from .session import abort_session, finish_session, start_session, verify_session
+from .session import abort_session, export_handoff, finish_session, start_session, verify_session
 from .ui import (
     failure,
     render_command_summary,
@@ -20,12 +18,7 @@ from .ui import (
     render_verification_ui,
     supports_color,
 )
-from .worker import run_worker_check
-from .workflow import (
-    build_implementation_prompt,
-    export_contract,
-    build_workflow_status,
-)
+from .workflow import build_workflow_status
 
 
 def parser() -> argparse.ArgumentParser:
@@ -45,16 +38,9 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("task_file", type=Path, help="Disposable task-authoring TOML file.")
 
     sub.add_parser("status", help="Show the active workflow state and next action.")
-    sub.add_parser("prompt", help="Render the frozen implementation handoff for the active session.")
-
-    sub.add_parser("contract", help="Temporary JSON export of the active frozen contract to stdout.")
-
-    sub.add_parser("verify", help="Run configured verification and bind the result to current state.")
-
-    check = sub.add_parser("check", help="Run stateless worker checks from a frozen contract.")
-    check.add_argument("--contract", required=True, type=Path, help="Path to the canonical frozen JSON contract.")
-    check.add_argument("--final", action="store_true", help="Require a clean final handoff candidate.")
-    check.add_argument("--json", action="store_true", dest="as_json", help="Emit one structured JSON result.")
+    handoff = sub.add_parser("handoff", help="Re-export the retained portable worker archive.")
+    handoff.add_argument("--output", type=Path)
+    sub.add_parser("verify", help="Independently verify the final candidate.")
 
     sub.add_parser("abort", help="Close the active session without acceptance.")
 
@@ -83,18 +69,6 @@ def main(argv: list[str] | None = None) -> int:
 
     color = supports_color(sys.stdout)
 
-    if args.command == "check":
-        try:
-            root = find_root(Path.cwd())
-            result = run_worker_check(root, args.contract, final=args.final)
-        except (HarnessError, OSError) as exc:
-            result = unavailable_worker_result(args.contract, final=args.final, message=str(exc))
-        if args.as_json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        else:
-            print(render_worker_check(result), end="")
-        return 0 if result["ready"] else 1
-
     try:
         root = find_root(Path.cwd())
         if args.command == "init":
@@ -120,9 +94,11 @@ def main(argv: list[str] | None = None) -> int:
                     tone="success",
                     details=[
                         ("objective", str(state["contract"]["objective"])),
+                        ("contract ID", state["contract_id"]),
+                        ("handoff", str(root / state["handoff"]["path"])),
                         ("implementation branch", str(state["contract"]["branch"])),
                     ],
-                    next_action="Export `ekzd contract` to .ekzd/local/contract.json and use `ekzd prompt` for worker instructions.",
+                    next_action="Transfer/extract the handoff outside the target checkout; from the declared branch run `python3 /path/to/handoff/run.py prepare`.",
                     enabled=color,
                 ),
                 end="",
@@ -132,11 +108,8 @@ def main(argv: list[str] | None = None) -> int:
             status = build_workflow_status(root)
             print(render_status_ui(status, enabled=color), end="")
             return 0
-        if args.command == "prompt":
-            print(build_implementation_prompt(root), end="")
-            return 0
-        if args.command == "contract":
-            sys.stdout.write(export_contract(root))
+        if args.command == "handoff":
+            print(export_handoff(root, args.output))
             return 0
         if args.command == "verify":
             verification = verify_session(root)

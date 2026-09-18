@@ -7,12 +7,14 @@ from .contract_check import check_contract
 from .core import HarnessError
 
 
-def run_worker_check(root: Path, contract_path: Path, *, final: bool = False) -> dict:
+def run_worker_check(root: Path, contract_path: Path, *, final: bool = False, prepare: bool = False, authority_guard=None) -> dict:
     try:
         contract = load_contract(contract_path)
         payload = canonical_bytes(contract)
 
         def guard():
+            if authority_guard is not None:
+                authority_guard()
             try:
                 current = contract_path.read_bytes()
             except OSError as exc:
@@ -20,7 +22,7 @@ def run_worker_check(root: Path, contract_path: Path, *, final: bool = False) ->
             if current != payload:
                 raise HarnessError("Frozen contract changed during evaluation.")
 
-        result = check_contract(root, contract, final=final, authority_guard=guard)
+        result = check_contract(root, contract, final=final, prepare=prepare, authority_guard=guard)
         result["contract_path"] = str(contract_path.resolve())
         return result
     except (HarnessError, OSError) as exc:

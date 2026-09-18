@@ -2,28 +2,9 @@
 from pathlib import Path
 
 from .candidate import capture_candidate
-from .contract import canonical_bytes
 from .core import HarnessError, session_commit_count
-from .session import active_state, read_state
+from .session import read_state
 from .identity import BuildIdentityUnavailable, runtime_identity
-
-
-def export_contract(root: Path) -> str:
-    return canonical_bytes(active_state(root)["contract"]).decode("utf-8")
-
-
-def build_implementation_prompt(root: Path) -> str:
-    state = active_state(root)
-    return (
-        "Implement the frozen EkzD contract below. Its ID is an integrity checksum, not a signature.\n"
-        f"Contract ID: {state['contract_id']}\n"
-        "Use the exact pinned EkzD runtime and the declared implementation branch from the baseline.\n"
-        "Consult sources at the baseline; scope may permit their later deletion.\n"
-        "Run `ekzd check --contract contract.json` while developing and `ekzd check --contract contract.json --final` before returning the committed candidate.\n"
-        "Missing required verification tools block readiness. Report blockers; do not expand authority.\n"
-        "Return the candidate commit and check results. The maintainer independently verifies and explicitly accepts. Do not merge.\n\n"
-        + canonical_bytes(state["contract"]).decode("utf-8")
-    )
 
 
 def build_workflow_status(root: Path) -> dict:
@@ -38,7 +19,7 @@ def build_workflow_status(root: Path) -> dict:
         return result
     result.update(implementation_branch=contract["branch"], baseline_head=contract["baseline"],
                   max_commits=contract["max_commits"], verification="not run",
-                  next="Export `ekzd contract` and `ekzd prompt`; work on the declared branch, then run `ekzd verify`.")
+                  next="Transfer the archive from `ekzd handoff`; worker runs `python3 run.py prepare`. Independently run `ekzd verify` on return.")
     try:
         if runtime_identity() != contract["ekzd"]:
             raise HarnessError("Executing runtime differs from the frozen contract; use the pinned build.")
