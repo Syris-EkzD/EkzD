@@ -11,6 +11,7 @@ from .contract import canonical_bytes, contract_id, validate_contract
 from .core import HarnessError
 from .launcher import validate_payload
 from .runtime import capture_runtime
+from .identity import BuildIdentityUnavailable
 
 
 def instructions(contract: dict) -> bytes:
@@ -44,7 +45,10 @@ verifies and explicitly accepts; worker success is not acceptance.
 
 def build_payload(contract: dict) -> dict[str, bytes]:
     validate_contract(contract)
-    runtime = capture_runtime(contract['ekzd'])
+    try:
+        runtime = capture_runtime(contract['ekzd'])
+    except BuildIdentityUnavailable as exc:
+        raise HarnessError(f"Runtime capture unavailable: {exc}") from exc
     files = {'contract.json': canonical_bytes(contract), 'instructions.md': instructions(contract),
              'run.py': runtime['launcher.py']}
     files.update({'runtime/ekzd/' + name: content for name, content in runtime.items()})
