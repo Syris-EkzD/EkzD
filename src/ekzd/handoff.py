@@ -88,6 +88,7 @@ def retain_handoff(root: Path, contract: dict) -> tuple[dict, bool]:
     if destination.exists() or destination.is_symlink():
         if reexport_bytes(root, contract, metadata) != archive:
             raise HarnessError('Existing retained handoff differs; remove it before refreezing.')
+        write_archive(destination / 'handoff.zip', archive)
         return metadata, False
     temporary = Path(tempfile.mkdtemp(prefix='.handoff-', dir=parent))
     try:
@@ -96,7 +97,10 @@ def retain_handoff(root: Path, contract: dict) -> tuple[dict, bool]:
             path = payload / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
-        validate_payload(payload)
+        try:
+            validate_payload(payload)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HarnessError(f'Constructed handoff failed validation: {exc}') from exc
         (temporary / 'handoff.zip').write_bytes(archive)
         for path in temporary.rglob('*'):
             if path.is_file():

@@ -55,3 +55,26 @@ class HandoffStartTests(unittest.TestCase):
         session.write_state(self.root, state)
         with self.assertRaisesRegex(HarnessError, 'handoff identity'):
             session.export_handoff(self.root)
+
+    def test_refreezing_identical_task_restores_missing_archive_before_success(self):
+        first = freeze(self.root)
+        archive = self.root / first['handoff']['path']
+        original = archive.read_bytes()
+        session.abort_session(self.root)
+        archive.unlink()
+        second = freeze(self.root)
+        self.assertEqual(first['contract_id'], second['contract_id'])
+        self.assertEqual(original, archive.read_bytes())
+
+    def test_archive_write_failure_removes_temporary_payload_and_session(self):
+        from pathlib import Path
+        original = Path.write_bytes
+        def fail_archive(path, content):
+            if path.name == 'handoff.zip':
+                raise OSError('archive write failed')
+            return original(path, content)
+        with mock.patch.object(Path, 'write_bytes', fail_archive):
+            with self.assertRaisesRegex(OSError, 'archive write failed'):
+                freeze(self.root)
+        self.assertIsNone(session.read_state(self.root))
+        self.assertEqual([], list((self.root / '.ekzd/local/handoffs').iterdir()))

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from ekzd import handoff
+from ekzd.core import HarnessError
 from ekzd.contract import compose_contract
 from ekzd.identity import runtime_identity
 from test_contract import project, task
@@ -31,7 +32,7 @@ class HandoffTests(unittest.TestCase):
                 self.assertNotIn('..', Path(info.filename).parts)
                 self.assertTrue(info.filename in {'run.py', 'instructions.md', 'contract.json', 'handoff.json'} or info.filename.startswith('runtime/ekzd/') and info.filename.endswith('.py'))
         for name in ('/etc/passwd', '../outside', 'a/../outside'):
-            with self.assertRaises(Exception):
+            with self.assertRaises(HarnessError):
                 handoff.archive_bytes({name: b'bad'})
 
     def test_reexport_uses_retained_payload_even_without_archive_or_current_runtime(self):
@@ -47,7 +48,7 @@ class HandoffTests(unittest.TestCase):
         metadata, _ = handoff.retain_handoff(self.root, self.contract)
         path = (self.root / metadata['path']).parent / 'payload/contract.json'
         path.write_bytes(path.read_bytes() + b' ')
-        with self.assertRaises(Exception):
+        with self.assertRaises(HarnessError):
             handoff.reexport_bytes(self.root, self.contract, metadata)
 
     def test_failed_archive_build_publishes_nothing(self):

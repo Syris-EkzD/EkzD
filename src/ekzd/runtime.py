@@ -21,7 +21,7 @@ def capture_runtime(expected: dict[str, str]) -> dict[str, bytes]:
                 if entry.is_symlink():
                     raise HarnessError("Runtime capture rejects symlinks.")
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name != '__pycache__':
+                    if entry.name not in {'__pycache__', '.git'}:
                         stack.append(Path(entry.path))
                 elif not entry.is_file(follow_symlinks=False):
                     raise HarnessError("Runtime capture rejects special files.")

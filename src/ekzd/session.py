@@ -103,6 +103,8 @@ def write_state(root: Path, state: dict) -> None:
             os.fsync(directory)
         finally:
             os.close(directory)
+        # Publication is the final fallible action: callers must not roll back
+        # handoff material after a session has already become visible.
         os.replace(name, path)
     finally:
         if os.path.exists(name):
