@@ -33,8 +33,12 @@ class ProjectSetupTests(unittest.TestCase):
     def test_init_creates_durable_template_and_local_ignore(self):
         self.assertIn('/.ekzd/local/', (self.root / '.gitignore').read_text())
         self.assertEqual('Demo', core.load_config(self.root, ready=False)['name'])
-        self.assertNotIn('include', self.policy.read_text())
-        with self.assertRaises(core.HarnessError):
+        template = self.policy.read_text()
+        self.assertNotIn('include', template)
+        self.assertNotIn('verification = []', template)
+        self.assertIn('# [[verification]]', template)
+        self.assertIn('# command = ["..."]', template)
+        with self.assertRaisesRegex(core.HarnessError, r'add at least one \[\[verification\]\] step'):
             core.load_config(self.root)
 
     def test_start_requires_clean_committed_policy(self):

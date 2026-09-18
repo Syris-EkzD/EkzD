@@ -82,12 +82,18 @@ def parse_project(data: Any, *, ready: bool = True) -> dict:
     if isinstance(data, dict):
         _version(data.get("schema_version"), PROJECT_VERSION, "project schema")
     data = _object(data, {"schema_version", "name", "protected", "exclude", "guidance", "max_commits", "verification", "readiness"}, "project")
+    project_verification = data.get("verification", [])
+    if ready and project_verification == []:
+        raise HarnessError(
+            "Project verification is not configured; add at least one [[verification]] step "
+            "to .ekzd/project.toml before starting a task."
+        )
     return {"schema_version": PROJECT_VERSION, "name": _text(data.get("name"), "project.name"),
             "protected": sorted(set(_strings(data.get("protected", []), "project.protected", paths=True))),
             "exclude": sorted(set(_strings(data.get("exclude", []), "project.exclude", paths=True))),
             "guidance": _strings(data.get("guidance", []), "project.guidance"),
             "max_commits": _positive(data.get("max_commits", DEFAULT_MAX_COMMITS), "project.max_commits"),
-            "verification": verification_steps(data.get("verification", []), required=ready),
+            "verification": verification_steps(project_verification, required=ready),
             "readiness": verification_steps(data.get("readiness", []), label="readiness")}
 
 
