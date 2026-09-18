@@ -50,5 +50,3 @@ class PreparationTests(unittest.TestCase):
         self.git('add', '.'); self.git('commit', '-qm', 'candidate')
         self.assertFalse(check_contract(self.root, c, final=True, prepare=True)['ready'])
         self.assertTrue(check_contract(self.root, c, final=True)['ready'])
-
-

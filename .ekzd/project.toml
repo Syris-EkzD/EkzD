@@ -34,7 +34,7 @@ cwd = "."
 timeout_seconds = 120
 
 [[verification]]
-name = "contract-help"
-command = ["env", "PYTHONPATH=src", "python3", "-m", "ekzd.cli", "contract", "--help"]
+name = "handoff-help"
+command = ["env", "PYTHONPATH=src", "python3", "-m", "ekzd.cli", "handoff", "--help"]
 cwd = "."
 timeout_seconds = 120
