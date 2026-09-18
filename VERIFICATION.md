@@ -38,9 +38,11 @@ The maintainer adapter validates the stored contract ID, clears earlier success 
 
 Verification records the candidate binding, contract ID and structured results. `finish --accept` requires successful evidence for that same candidate and contract, rechecks authority and final state, and records the exact accepted HEAD/candidate/contract ID. It does not rerun commands. Changing authority requires abort, edit and refreeze; a new session clears all prior evidence. Finished/aborted records remain local until the next start replaces them. There is no acceptance-history database or automatic migration.
 
-Handoff construction completes before the active session is published. The local record binds
-contract ID, archive SHA-256 and payload-manifest SHA-256. Failed construction leaves no new active
-session or partial archive. Re-export reads retained payload rather than current inputs/runtime.
+Handoff construction completes before the active session is published. The archive created by
+`ekzd start` is the ordinary worker input; `ekzd handoff` only recreates or copies that retained
+archive and is not another freeze/export step. The local record binds contract ID, archive SHA-256
+and payload-manifest SHA-256. Failed construction leaves no new active session or partial archive.
+Re-export reads retained payload rather than current inputs/runtime.
 ZIP members are sorted POSIX relative paths with timestamp 1980-01-01, regular-file mode 0644,
 no extra/comment fields and stored (uncompressed) bytes. Caches, symlinks and special files are not
 included. The canonical handoff manifest hashes every payload file, including contract and launcher.
