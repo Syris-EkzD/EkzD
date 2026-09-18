@@ -53,8 +53,11 @@ class CliFlowTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, str(Path(worker_dir) / 'run.py'), *args, '--json'], cwd=root, capture_output=True, text=True)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 return result.stdout
-            cli('status')
+            status = cli('status')
+            self.assertIn(str(root / state['handoff']['path']), status)
+            self.assertNotIn('ekzd handoff', status)
             git('switch', '-qc', 'feat/task')
+            self.assertTrue(json.loads(worker('prepare'))['ready'])
             (root / 'app.py').write_text('VALUE = 2\n')
             self.assertTrue(json.loads(worker('check'))['ready'])
             git('add', 'app.py')

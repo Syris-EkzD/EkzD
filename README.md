@@ -2,30 +2,55 @@
 
 EkzD is a small, project-agnostic development harness for scoped and verifiable AI-assisted work.
 
-It does not run an AI model, orchestrate agents, replace Git, or replace CI. Its job is narrower: define the working contract for a task, expose that contract to the tools or people doing the work, keep each session bounded, run deterministic local verification, and refuse acceptance unless the verified state still matches the state being accepted.
+It freezes durable project policy plus disposable task intent into one contract, creates a portable pinned worker handoff, checks the returned candidate, and requires explicit maintainer acceptance. It does not run an AI model, install dependencies, clone repositories, push branches, or merge pull requests.
 
-## Project setup and repeated tasks
+## Workflow
 
-Configure `.ekzd/project.toml` once with durable project policy, then commit it and the local-state ignore rule:
+The supported workflow is:
+
+```text
+1. init project once
+2. configure and commit durable project policy
+3. write a disposable local task
+4. start the task
+5. transfer the generated handoff archive
+6. worker prepare → check → check --final
+7. maintainer verify → review → finish --accept
+```
+
+A new task should not require another project-policy commit unless the durable policy itself changes.
+
+## 1. Initialize project policy
+
+Run once inside a conventional Git checkout:
 
 ```sh
 ekzd init
-# Edit .ekzd/project.toml: permanent protections, guidance, required checks.
-git add .ekzd/project.toml .gitignore
-git commit -m "chore: configure EkzD policy"
-mkdir -p .ekzd/local
 ```
 
-The supported project schema is shallow TOML:
+The generated `.ekzd/project.toml` is intentionally not ready to start a task until at least one required verification step is configured:
 
 ```toml
 schema_version = 2
 name = "Example"
-protected = ["secrets/", ".github/"]
-exclude = ["src/generated/"]
-guidance = ["Keep dependencies minimal."]
+protected = []
+exclude = []
+guidance = []
 max_commits = 20
+# Add at least one required verification step before starting a task.
+#
+# [[verification]]
+# name = "tests"
+# command = ["..."]
+# cwd = "."
+# timeout_seconds = 600
+```
 
+Uncomment or add one or more `[[verification]]` tables directly; there is no conflicting placeholder to remove.
+
+A configured project can also declare optional additive readiness probes:
+
+```toml
 [[readiness]]
 name = "python"
 command = ["python3", "--version"]
@@ -38,9 +63,29 @@ cwd = "."
 timeout_seconds = 600
 ```
 
-`verification` must contain at least one required step. Remove the empty `verification = []` placeholder created by `init` when adding `[[verification]]` tables. Steps execute direct argv arrays without a shell. `cwd` defaults to `.` and timeout defaults to 600 seconds (positive integer, at most 3600). `max_commits` defaults to 20, but any positive integer is supported. Other project lists default to empty. Unknown keys are errors in every supported schema/object.
+Commit the durable policy and generated ignore rule:
 
-For each task, write disposable `.ekzd/local/task.toml`:
+```sh
+git add .ekzd/project.toml .gitignore
+git commit -m "chore: configure EkzD policy"
+```
+
+`.ekzd/local/` remains ignored and untracked.
+
+Project fields are:
+
+- `schema_version = 2`
+- non-empty `name`
+- optional `protected`, `exclude`, and `guidance` arrays
+- positive `max_commits` (default 20)
+- optional `[[readiness]]` probes
+- at least one required `[[verification]]` step before a task can start
+
+Verification/readiness steps use direct argv arrays without a shell. `cwd` defaults to `.`; `timeout_seconds` defaults to 600 and may not exceed 3600.
+
+## 2. Write a disposable task
+
+Keep task drafts under the ignored local directory, for example `.ekzd/local/task.toml`:
 
 ```toml
 schema_version = 1
@@ -49,79 +94,101 @@ branch = "feat/registration-validation"
 include = ["src/registration/", "tests/registration/"]
 exclude = []
 sources = ["src/registration/model.py"]
-acceptance = ["Invalid usernames are rejected.", "Existing valid usernames still pass."]
+acceptance = [
+  "Invalid usernames are rejected.",
+  "Existing valid usernames still pass.",
+]
 guidance = ["Keep this implementation dependency-free."]
 max_commits = 8
 
-# Optional additive checks; project checks always run first.
+# Optional additive task-specific checks.
 [[verification]]
 name = "focused-tests"
 command = ["python3", "-m", "unittest", "tests.registration.test_validation"]
 ```
 
-Only `schema_version`, `objective`, `branch`, non-empty `include`, and non-empty `acceptance` are required. Task budget overrides the project default. Project exclusions and task exclusions are combined; project protections cannot be removed by a task. Guidance, readiness probes and verification steps are additive. Optional `[[readiness]]` tables use the same name/argv/cwd/timeout shape in both project and task files. Probes should check capabilities (for example an executable version or module import), not run the full correctness suite. Sources must be regular files at the frozen baseline and may later be modified, renamed or deleted if scope permits.
+Required task fields are `schema_version`, `objective`, `branch`, non-empty `include`, and non-empty `acceptance`.
+
+Task exclusions extend project exclusions. Project protections cannot be removed by a task. Guidance, readiness, and verification are additive. A task-specific commit budget overrides the project default. Declared source files must exist as regular files at the frozen baseline.
+
+## 3. Start and transfer the handoff
 
 From a clean baseline:
 
 ```sh
 ekzd start .ekzd/local/task.toml
-# Output includes contract ID and .ekzd/local/handoffs/<contract-id>/handoff.zip.
 ```
 
-Start validates committed project policy and the clean supported checkout, freezes one effective contract, and prints the declared implementation branch. It does not create or switch branches. The implementation branch must differ from the branch used to freeze the baseline; a detached baseline is allowed.
+`start` validates the committed project policy and checkout, freezes the exact baseline/branch/authority/runtime identity, and atomically creates the usable archive:
 
-Start captures the executing Python package and automatically publishes a complete portable ZIP with
-`instructions.md`, `contract.json`, `run.py`, `handoff.json` and `runtime/ekzd/*.py`.
-Transfer this archive and obtain the target repository separately. Extract the archive outside the
-checkout; the worker needs Linux, Python 3.11+, Git and the declared project capabilities, but **no
-installed EkzD** and no network access to obtain EkzD. EkzD installs nothing and does not fetch Git.
+```text
+.ekzd/local/handoffs/<contract-id>/handoff.zip
+```
 
-`ekzd handoff` recreates a missing active archive from retained payload. Use
-`ekzd handoff --output /outside/repository/handoff.zip` for a copy. Re-export is byte-identical and
-uses neither current project/task inputs nor a newer installed runtime. Different existing output
-is never overwritten. Retained payload is under `.ekzd/local/handoffs/<contract-id>/payload/`.
+Its output includes the contract ID, archive path, implementation branch, and worker next action. `ekzd status` shows the active archive path again if you need it.
 
-Worker steps:
+The archive contains `instructions.md`, `contract.json`, `run.py`, `handoff.json`, and the exact pinned `runtime/ekzd/*.py` source. Transfer that archive and obtain the target repository separately. Extract the handoff outside the target checkout.
+
+`ekzd handoff` is recovery/copy functionality only. It recreates the retained active archive or writes a byte-identical external copy:
 
 ```sh
-# Start from the frozen baseline commit, on the declared branch.
-git switch -c feat/registration-validation <baseline-sha>
-python3 /path/to/handoff/run.py prepare --json
-python3 /path/to/handoff/run.py check --json
-# Implement, check, fix, self-review.
-git add <scoped-files>
-git commit -m "feat: validate registration"
-python3 /path/to/handoff/run.py check --final --json
-# Return the exact committed candidate and check results to the maintainer.
+ekzd handoff
+ekzd handoff --output /outside/repository/handoff.zip
 ```
 
-Preparation requires the declared branch at the exact clean baseline, validates the supported checkout and handoff identity, and runs only readiness probes. Missing executables/modules or failing capability probes block preparation as `UNAVAILABLE`. Every later check repeats readiness before correctness verification; no readiness token is cached. Task tests may refer to files that do not exist until implementation. Probes are trusted read-only commands: persistent candidate mutation fails closed, but EkzD is not a sandbox. Development checks allow dirty, scoped work. Final checks require a clean, fully committed candidate on the declared branch. Both use the same frozen-contract checker and command evaluator as maintainer verification. Worker checking does not read or modify the maintainer session.
+A normal task does not require a separate export step after `start`.
 
-Maintainer steps, after obtaining and reviewing the worker candidate:
+## 4. Worker flow
+
+Start the target checkout from the frozen baseline on the declared implementation branch, then use only the transferred handoff runtime:
+
+```sh
+git switch -c feat/registration-validation <baseline-sha>
+
+python3 /path/to/handoff/run.py prepare --json
+python3 /path/to/handoff/run.py check --json
+
+# Implement, test, fix, and self-review.
+git add <scoped-files>
+git commit -m "feat: validate registration"
+
+python3 /path/to/handoff/run.py check --final --json
+```
+
+The worker does not need an installed EkzD package. The launcher isolates and verifies its bundled runtime before evaluation.
+
+`prepare` requires the declared branch at the exact clean baseline and runs frozen readiness probes only. Development `check` permits dirty scoped work. `check --final` requires a clean committed candidate on the declared implementation branch. Every check repeats readiness before correctness verification.
+
+PASS, FAIL, and UNAVAILABLE remain distinct. Required FAIL or UNAVAILABLE results block handoff readiness.
+
+## 5. Maintainer verification and acceptance
+
+After obtaining the exact worker candidate:
 
 ```sh
 git switch feat/registration-validation
 ekzd verify
 # Review the exact verified candidate.
 ekzd finish --accept
-# Human retains merge authority.
 ```
 
-Write the next local task and run `ekzd start .ekzd/local/task-b.toml`. No project-policy edit or administrative commit is needed. To change an active task's authority, run `ekzd abort`, edit inputs, and start again. Abort does not restore files or rewrite Git history. A new task never inherits previous verification evidence.
+Maintainer verification is independent of worker claims and binds evidence to the frozen contract and exact candidate. If the candidate changes after verification, acceptance becomes stale and verification must be rerun.
 
-## Frozen authority and local state
+The human retains merge authority.
 
-`.ekzd/local/` is ignored and must remain untracked. `.ekzd/project.toml` remains committed policy. One atomic `.ekzd/local/session.json` record contains the effective contract, its `contract_id`, lifecycle status and verification/acceptance evidence. No database is used; Linux advisory locking prevents competing lifecycle commands.
+To abandon an active task:
 
-The effective JSON contract contains `contract_version = 2`, baseline commit, implementation branch, project name and configuration digest, objective, resolved scope (`include`, `exclude`, `protected`), sources, acceptance, guidance, budget, complete readiness/verification steps and exact EkzD version/build identity. It contains no timestamp, output location, remote URL or self-referential ID.
+```sh
+ekzd abort
+```
 
-Canonical bytes use UTF-8, sorted object keys, compact `,` / `:` separators, no ASCII escaping of Unicode, and exactly one final LF. Scope lists are sorted and deduplicated; guidance, acceptance and verification retain their declared order. Project configuration digest hashes its normalized parsed representation, excluding TOML formatting noise. `contract_id = SHA256(canonical_contract_bytes)` is an integrity checksum, **not a signature or authentication mechanism**. Worker JSON must be canonical; use the generated handoff without editing its contents.
+Then edit task/policy inputs as needed and start again. Abort does not rewrite Git history or restore files.
 
-After start, editing the original task file or current project TOML does not change frozen authority. Verification never reconstructs it from those mutable inputs. Editing project policy still violates its protected candidate path. Changing authority requires abort/refreeze. The frozen contract and its ID are trusted local operator metadata; a hostile same-user process that rewrites both is outside the threat model.
+## Status and commands
 
-Both worker checks and maintainer verification/acceptance require the frozen EkzD version and build fingerprint. `ekzd --version` reports that identity: sorted package-relative `.py` paths and normalized source bytes, independent of installation location, Git metadata and caches. An unavailable or mismatching build blocks checking. The handoff delivers the pinned runtime; target toolchain/environment provisioning remains external. Repository remotes never authorize a task; changing HTTPS/SSH transports does not invalidate it.
+`ekzd status` is an advisory workflow compass. For an active task it shows the objective, implementation branch, frozen baseline, handoff path, candidate state, commit budget, verification state, and the practical next action.
 
-## Commands and compatibility
+Supported commands:
 
 ```sh
 ekzd --help
@@ -135,52 +202,36 @@ ekzd finish --accept
 ekzd abort
 ```
 
-`status` is advisory guidance (`not run`, `passed`, `stale`, `failed`, `blocked`); verification and acceptance enforce their own checks. Bare `ekzd` prints help without interaction. Human output retains the existing terminal color behavior (`NO_COLOR` disables it); worker `--json` output and the handoff path are plain.
+Bare `ekzd` prints help without interaction. `NO_COLOR` disables ANSI styling. Worker `--json` output remains structured and stable.
 
-Phase 4 removes temporary `contract`, `prompt` and installed `check --contract` commands. Contract version 1 and earlier local sessions are unsupported; remove the old local session and refreeze.
+Compatibility note: pre-1.0 legacy project/task/session formats and removed `contract`, `prompt`, `context`, old task-manifest, and installed worker-check interfaces are unsupported. Remove obsolete local state and refreeze with the current schemas; there is no migration layer.
 
-The earlier pre-1.0 change deliberately removes old project-task conflation, task-manifest schemas v1/v2, old session formats, `start "objective" --branch ...`, `task`, `context`, `check --task`, repository-locator gates and the universal 20-commit ceiling. Remove an old local session and start a new task with the current schemas. There is no automatic migration.
+## Trust model
 
-## Acceptance model
+EkzD preserves the exact baseline, implementation branch, history-aware scope, raw candidate binding, frozen contract authority, contract ID, pinned runtime identity, deterministic handoff integrity, repeated readiness, verifier mutation detection, process-group cleanup, bounded output, atomic session/handoff publication, stale-verification rejection, independent maintainer verification, and explicit human acceptance.
 
-`ekzd verify` and worker `python3 run.py check --final` require a clean, fully committed candidate on the declared implementation branch. Detached candidates, unresolved conflicts and in-progress Git operations are rejected. `python3 run.py check` permits dirty development work.
+The contract ID and handoff hashes are integrity checksums, not signatures. EkzD assumes a trusted maintainer environment and a conventional Git checkout. It does not sandbox hostile same-user processes or prove semantic correctness.
 
-Candidate binding hashes raw tracked and non-ignored untracked file contents, Git executable modes, symlink values, HEAD, branch, and index identities. It does not use textconv or external diff output. Raw working files must match their index blobs for final readiness; a checkout transformation such as LF-to-CRLF conversion is therefore not a clean final candidate even if ordinary Git status hides it. Verification captures the candidate before commands, checks it before and after each command and at completion, and rejects observed mutation without restoring it or adopting it as verified state.
-
-Submodules (clean or dirty), shallow repositories, sparse checkout, hidden index flags, active tracked content filters, replacement refs/grafts, nested repositories encountered as candidate paths, and special candidate files are unsupported. Complete Git operations and use a conventional checkout before evaluating. Snapshots assume a quiescent checkout; they are not a sandbox or an atomic filesystem transaction. Ignored files and external symlink-target contents are not bound. A command checking an ignored file does not add that file to the fingerprint.
-
-`verify` clears previous success before a new attempt, checks frozen scope/protections/budget, and runs the resolved required steps. A contract/session change during execution stops later checks. Verification evidence binds the initial candidate and exact contract ID. Ordinary nonzero failures can continue while trust remains intact; `FAIL` and `UNAVAILABLE` always block readiness. Verifier stdout and stderr are bounded and invalid UTF-8 is replaced.
-
-`finish --accept` requires successful maintainer verification for the same contract ID, HEAD, branch and raw candidate fingerprint. It rechecks final state, scope, protections, budget and runtime identity without rerunning the commands. The accepted record identifies that exact candidate and contract. A stale candidate or contract requires new verification.
-
-Protected paths include `.ekzd/project.toml`, `.ekzd/local/`, the legacy `.ekzd/session.json`, and project-specific protections. They cannot be changed in candidate history, even if later restored or untracked. Ignored local session evidence is bound separately while verification runs.
-
-`--accept` is an explicit operator attestation, not proof of the operator's identity or semantic correctness. See [VERIFICATION.md](VERIFICATION.md) for execution behavior and trust limits.
+See [VERIFICATION.md](VERIFICATION.md) for precise candidate evidence, frozen-authority composition, evaluator behavior, lifecycle binding, scope/history rules, and acceptance limits.
 
 ## Boundaries
 
-The current design deliberately stays small:
+EkzD deliberately does not provide:
 
-- single-operator personal workflow rather than multi-user configuration ownership;
-- conventional Git checkout only: no custom tracked-file content filters or Git LFS, no `assume-unchanged`, and no `skip-worktree`/sparse-checkout state;
-- no daemon;
-- no database;
-- no model/API integration;
-- no network operations;
-- no GitHub authentication inside EkzD;
-- no autonomous PR creation, commits, pushes, merges, or deployments;
-- no real-time interception of an AI's GitHub writes;
-- no operating-system sandbox against a hostile same-user process with arbitrary filesystem, Git, or process control;
-- no claim that free-text authority rules are mechanically understood;
-- no claim that deterministic checks can prove semantic correctness.
+- model/API integration;
+- dependency or package installation;
+- repository cloning;
+- automatic commits, pushes, pull requests, merges, or deployments;
+- daemon/background services;
+- dashboards, TUIs, databases, plugins, or a policy DSL;
+- Windows/macOS worker support;
+- operating-system sandboxing.
 
-GitHub Actions can provide remote verification for repositories that need dependencies or services unavailable in a local/session environment. EkzD remains the harness; CI remains an independent execution/verification service.
+Linux, Python 3.11+, Git, and project-declared capabilities are expected to be provisioned externally.
 
 ## Development
 
-EkzD requires Python 3.11+ and Git.
-
-Install it from the repository with:
+Install from the repository:
 
 ```sh
 python3 -m pip install .
@@ -188,11 +239,9 @@ ekzd --help
 ekzd --version
 ```
 
-Run its tests with:
+Run the test suite:
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 python3 -m compileall -q src tests
 ```
-
-The repository history before EkzD is retained as the historical WhiteTree Workflow Manager experiment. The current implementation replaces that mechanism rather than extending it.

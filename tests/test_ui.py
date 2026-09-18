@@ -14,7 +14,6 @@ from ekzd.ui import (
     RESET,
     YELLOW,
     render_command_summary,
-    render_context_ui,
     render_status_ui,
     render_verification_ui,
     success,
@@ -80,9 +79,9 @@ class UiTests(unittest.TestCase):
             "project": "Demo",
             "objective": "Change one thing",
             "current_branch": "main",
-            "baseline_branch": "main",
             "implementation_branch": "feat/demo",
             "baseline_head": "1234567890abcdef",
+            "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
@@ -100,6 +99,8 @@ class UiTests(unittest.TestCase):
         self.assertIn("Branches", rendered)
         self.assertIn("implementation  feat/demo", rendered)
         self.assertIn("Repository", rendered)
+        self.assertIn("handoff  /repo/.ekzd/local/handoffs/demo/handoff.zip", rendered)
+        self.assertNotIn("baseline  main", rendered)
         self.assertIn("commits  0 / 3", rendered)
         self.assertIn("Next", rendered)
         self.assertIn("› Rerun `ekzd verify`.", rendered)
@@ -110,7 +111,7 @@ class UiTests(unittest.TestCase):
                 "session_status": "finished",
                 "project": "Demo",
                 "objective": "Change one thing",
-                "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
+                "next": "Start a new task with `ekzd start task.toml`.",
             },
             enabled=False,
         )
@@ -125,16 +126,16 @@ class UiTests(unittest.TestCase):
             "project": "Demo",
             "objective": "Change one thing",
             "current_branch": "main",
-            "baseline_branch": "main",
             "implementation_branch": "feat/demo",
             "baseline_head": "1234567890abcdef",
+            "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
             "max_commits": 3,
             "verification": "not run",
             "blocked_reason": None,
-            "next": "Generate the implementation prompt.",
+            "next": "Transfer the existing handoff archive.",
         }
         rendered = render_status_ui(status, enabled=True)
         for label in ("project", "objective", "verification", "implementation"):
@@ -186,9 +187,9 @@ class UiTests(unittest.TestCase):
             "project": "Demo",
             "objective": "Change one thing",
             "current_branch": "main",
-            "baseline_branch": "main",
             "implementation_branch": "feat/demo",
             "baseline_head": "1234567890abcdef",
+            "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "fedcba0987654321",
             "worktree_clean": True,
             "commit_count": 4,
@@ -221,47 +222,6 @@ class UiTests(unittest.TestCase):
         self.assertIn("Result", rendered)
         self.assertIn("✗ Verification failed", rendered)
         self.assertIn("› Fix the reported failure and rerun `ekzd verify`.", rendered)
-
-    def test_context_plain_output_remains_readable(self) -> None:
-        context = {
-            "project": {"name": "Demo"},
-            "objective": "Change one thing",
-            "session_status": "active",
-            "session": {"max_commits": 3},
-            "git": {"branch": "feature/demo", "head": "1234567890abcdef", "status": []},
-            "scope": {"include": ["src/"], "exclude": [], "constraints": ["Stay focused."]},
-            "authority": {
-                "may": ["Edit src."],
-                "requires_approval": ["Merge."],
-                "may_not": ["Deploy."],
-            },
-            "acceptance": {"criteria": ["Tests pass."]},
-            "verification": {"steps": [{"name": "tests", "command": ["python3", "-m", "unittest"]}]},
-        }
-        rendered = render_context_ui(context, enabled=False)
-        self.assertNotIn("\x1b[", rendered)
-        self.assertIn("EkzD · Demo", rendered)
-        self.assertIn("feature/demo @ 12345678 · clean", rendered)
-        self.assertIn("Scope", rendered)
-        self.assertIn("Verification", rendered)
-        self.assertIn("tests python3 -m unittest", rendered)
-
-    def test_context_color_output_contains_semantic_ansi(self) -> None:
-        context = {
-            "project": {"name": "Demo"},
-            "objective": "Change one thing",
-            "session_status": "active",
-            "session": {"max_commits": 3},
-            "git": {"branch": "main", "head": "1234567890abcdef", "status": [" M README.md"]},
-            "scope": {"include": ["README.md"], "exclude": [], "constraints": []},
-            "authority": {"may": [], "requires_approval": [], "may_not": []},
-            "acceptance": {"criteria": ["Review complete."]},
-            "verification": {"steps": []},
-        }
-        rendered = render_context_ui(context, enabled=True)
-        self.assertIn("\x1b[36m", rendered)
-        self.assertIn("\x1b[33m", rendered)
-        self.assertNotIn(RED, rendered)
 
 
 if __name__ == "__main__":
