@@ -33,3 +33,9 @@ def freeze(root: Path, *, branch='feat/task', **kwargs):
 
 def export(root, path):
     path.write_bytes(canonical_bytes(session.active_state(root)['contract']))
+
+
+def export_contract(root):
+    from ekzd.contract import canonical_bytes
+    from ekzd.session import active_state
+    return canonical_bytes(active_state(root)['contract']).decode('utf-8')

@@ -47,7 +47,7 @@ class ContractTests(unittest.TestCase):
             data[key] = []
             with self.assertRaisesRegex(HarnessError, key):
                 parser(data)
-        for value in (0, 2, True, 1.0):
+        for value in (0, 1, 3, True, 2.0):
             c = self.compose()
             c["contract_version"] = value
             with self.assertRaisesRegex(HarnessError, "Unsupported"):

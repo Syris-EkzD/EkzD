@@ -12,7 +12,7 @@ from unittest import mock
 from ekzd import core, worker, session
 import ekzd.evaluation as evaluation
 from ekzd.evaluation import OUTPUT_LIMIT, VerificationStep, evaluate_candidate, run_verification_step
-from ekzd.workflow import export_contract
+from phase3_helpers import export_contract
 from phase3_helpers import freeze
 
 

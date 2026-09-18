@@ -9,7 +9,8 @@ from unittest import mock
 from ekzd import core, session
 from ekzd.contract import canonical_bytes, contract_id, load_contract
 from ekzd.worker import run_worker_check
-from ekzd.workflow import export_contract, build_implementation_prompt
+from phase3_helpers import export_contract
+from ekzd.handoff import instructions
 from phase3_helpers import project_text, task_text, freeze, export
 
 
@@ -64,7 +65,7 @@ class SessionContractTests(unittest.TestCase):
         (self.root / '.ekzd/local/draft.toml').write_text('invalid draft now')
         self.policy.write_text('invalid project now')
         self.assertEqual(frozen, export_contract(self.root))
-        self.assertIn(state['contract_id'], build_implementation_prompt(self.root))
+        self.assertIn(state['contract_id'], instructions(state['contract']).decode())
         self.assertFalse(session.verify_session(self.root)['passed'])
         self.git('restore', '.ekzd/project.toml')
         self.assertTrue(session.verify_session(self.root)['passed'])
@@ -113,6 +114,7 @@ class SessionContractTests(unittest.TestCase):
         state = session.read_state(self.root)
         state['contract']['objective'] = 'different authority'
         state['contract_id'] = contract_id(state['contract'])
+        state['handoff']['path'] = f".ekzd/local/handoffs/{state['contract_id']}/handoff.zip"
         session.write_state(self.root, state)
         with self.assertRaisesRegex(core.HarnessError, 'stale'):
             session.finish_session(self.root, accept=True)

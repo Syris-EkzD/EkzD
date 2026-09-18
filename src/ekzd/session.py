@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,7 +19,7 @@ from .identity import BuildIdentityUnavailable, runtime_identity
 
 LOCAL = Path(".ekzd/local")
 STATE = LOCAL / "session.json"
-SESSION_VERSION = 3
+SESSION_VERSION = 4
 
 
 def ensure_local(root: Path) -> None:
@@ -64,8 +65,8 @@ def read_state(root: Path) -> dict | None:
         raise HarnessError(f"Unable to read local session: {exc}") from exc
     if not isinstance(state, dict) or type(state.get("schema_version")) is not int or state["schema_version"] != SESSION_VERSION:
         raise HarnessError(LEGACY_MESSAGE)
-    allowed = {"schema_version", "status", "contract_id", "contract", "started_at", "verification", "acceptance", "aborted_at"}
-    if set(state) - allowed or not {"verification", "acceptance", "started_at"} <= set(state):
+    allowed = {"schema_version", "status", "contract_id", "contract", "started_at", "verification", "acceptance", "aborted_at", "handoff"}
+    if set(state) - allowed or not {"verification", "acceptance", "started_at", "handoff"} <= set(state):
         raise HarnessError("Invalid local session fields; remove the local record and refreeze.")
     for key in ("verification", "acceptance"):
         if state[key] is not None and not isinstance(state[key], dict):
@@ -73,6 +74,13 @@ def read_state(root: Path) -> dict | None:
     contract = validate_contract(state.get("contract"))
     if state.get("contract_id") != contract_id(contract):
         raise HarnessError("Frozen contract ID mismatch; abort/remove the local session and refreeze.")
+    handoff = state['handoff']
+    expected = f".ekzd/local/handoffs/{state['contract_id']}/handoff.zip"
+    if (not isinstance(handoff, dict) or set(handoff) != {'path', 'sha256', 'payload_sha256'}
+            or handoff.get('path') != expected
+            or any(not isinstance(handoff.get(key), str) or len(handoff[key]) != 64
+                   or any(c not in '0123456789abcdef' for c in handoff[key]) for key in ('sha256', 'payload_sha256'))):
+        raise HarnessError("Invalid session handoff identity; remove the local record and refreeze.")
     if state.get("status") not in {"active", "finished", "aborted"}:
         raise HarnessError("Invalid local session status.")
     return state
@@ -90,12 +98,14 @@ def write_state(root: Path, state: dict) -> None:
             handle.write(canonical_bytes(state))
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(name, path)
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
         finally:
             os.close(directory)
+        # Publication is the final fallible action: callers must not roll back
+        # handoff material after a session has already become visible.
+        os.replace(name, path)
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -117,6 +127,8 @@ def active_state(root: Path) -> dict:
 
 
 def start_session(root: Path, task_path: Path) -> dict:
+    from .handoff import retain_handoff
+
     with lifecycle_lock(root):
         existing = read_state(root)
         if existing and existing["status"] == "active":
@@ -142,10 +154,20 @@ def start_session(root: Path, task_path: Path) -> dict:
         validate_baseline_sources(root, contract)
         if capture_candidate(root) != candidate:
             raise HarnessError("Candidate changed while freezing the baseline.")
-        state = {"schema_version": SESSION_VERSION, "status": "active", "contract_id": contract_id(contract),
-                 "contract": contract, "started_at": utc_now(), "verification": None, "acceptance": None}
-        write_state(root, state)
+        metadata, created = retain_handoff(root, contract)
+        try:
+            if capture_candidate(root) != candidate:
+                raise HarnessError("Candidate changed while constructing the handoff.")
+            state = {"schema_version": SESSION_VERSION, "status": "active", "contract_id": contract_id(contract),
+                     "contract": contract, "handoff": metadata, "started_at": utc_now(),
+                     "verification": None, "acceptance": None}
+            write_state(root, state)
+        except BaseException:
+            if created:
+                shutil.rmtree((root / metadata['path']).parent)
+            raise
         return state
+
 
 
 def verify_session(root: Path) -> dict:
@@ -209,3 +231,20 @@ def abort_session(root: Path) -> dict:
         state.update(status="aborted", aborted_at=utc_now(), verification=None, acceptance=None)
         write_state(root, state)
         return state
+
+
+def export_handoff(root: Path, output: Path | None = None) -> Path:
+    from .handoff import reexport_bytes, write_archive
+
+    with lifecycle_lock(root):
+        state = active_state(root)
+        content = reexport_bytes(root, state['contract'], state['handoff'])
+        destination = output.expanduser() if output is not None else root / state['handoff']['path']
+        # Never write a handoff into candidate files or replace session authority.
+        resolved = destination.resolve()
+        if resolved.is_relative_to(root.resolve()):
+            expected = (root / state['handoff']['path']).resolve()
+            if resolved != expected:
+                raise HarnessError("Explicit handoff copies must be outside the target repository.")
+        write_archive(destination, content)
+        return destination

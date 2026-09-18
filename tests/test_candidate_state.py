@@ -11,7 +11,8 @@ from unittest import mock
 
 from ekzd import core, worker, session, contract_check
 from ekzd.candidate import capture_candidate
-from ekzd.workflow import export_contract, build_workflow_status
+from phase3_helpers import export_contract
+from ekzd.workflow import build_workflow_status
 from phase3_helpers import project_text, task_text, freeze
 
 
@@ -77,14 +78,16 @@ class CandidateStateTests(unittest.TestCase):
         draft = self.base / 'draft.toml'
         draft.write_text(task_text())
         self.assertEqual(0, cli('start', str(draft)).returncode)
-        exported = cli('contract')
-        self.assertEqual(0, exported.returncode, exported.stderr)
-        self.task.write_text(exported.stdout)
+        import zipfile
+        state = session.read_state(self.root)
+        location = self.base / 'handoff'
+        with zipfile.ZipFile(self.root / state['handoff']['path']) as archive:
+            archive.extractall(location)
         self.assertNotEqual(0, cli('verify').returncode)  # Still on main.
         self.git('checkout', '-qb', 'feat/task')
         (self.root / 'README.md').write_text('implemented')
         self.commit()
-        checked = cli('check', '--final', '--contract', str(self.task), '--json')
+        checked = subprocess.run([sys.executable, str(location / 'run.py'), 'check', '--final', '--json'], cwd=self.root, env=env, text=True, capture_output=True)
         self.assertEqual(0, checked.returncode, checked.stdout + checked.stderr)
         self.assertTrue(json.loads(checked.stdout)['ready'])
         verified = cli('verify')
