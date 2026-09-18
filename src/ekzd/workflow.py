@@ -18,8 +18,9 @@ def build_workflow_status(root: Path) -> dict:
     if state["status"] != "active":
         return result
     result.update(implementation_branch=contract["branch"], baseline_head=contract["baseline"],
+                  handoff_path=str(root / state["handoff"]["path"]),
                   max_commits=contract["max_commits"], verification="not run",
-                  next="Transfer the archive from `ekzd handoff`; worker runs `python3 run.py prepare`. Independently run `ekzd verify` on return.")
+                  next="Transfer the existing handoff archive; worker runs `python3 /path/to/handoff/run.py prepare`. Independently run `ekzd verify` on return.")
     try:
         if runtime_identity() != contract["ekzd"]:
             raise HarnessError("Executing runtime differs from the frozen contract; use the pinned build.")

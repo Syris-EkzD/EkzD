@@ -148,12 +148,12 @@ def render_status_ui(status: dict[str, object], *, enabled: bool) -> str:
             _field("verification", _verification_value(verification, enabled=enabled), enabled=enabled),
             "",
             _section("Branches", enabled=enabled),
-            _meta("baseline", str(status.get("baseline_branch", "(frozen commit)")), enabled=enabled),
             _field("implementation", str(status["implementation_branch"]), enabled=enabled),
             _meta("current", str(status.get("current_branch", "unavailable")), enabled=enabled),
             "",
             _section("Repository", enabled=enabled),
             _meta("baseline HEAD", str(status["baseline_head"])[:12], enabled=enabled),
+            _meta("handoff", str(status["handoff_path"]), enabled=enabled),
             _meta("worktree", "clean" if status.get("worktree_clean", False) else "changed", enabled=enabled),
         ]
     )

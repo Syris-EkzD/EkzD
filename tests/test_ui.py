@@ -79,9 +79,9 @@ class UiTests(unittest.TestCase):
             "project": "Demo",
             "objective": "Change one thing",
             "current_branch": "main",
-            "baseline_branch": "main",
             "implementation_branch": "feat/demo",
             "baseline_head": "1234567890abcdef",
+            "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
@@ -99,6 +99,8 @@ class UiTests(unittest.TestCase):
         self.assertIn("Branches", rendered)
         self.assertIn("implementation  feat/demo", rendered)
         self.assertIn("Repository", rendered)
+        self.assertIn("handoff  /repo/.ekzd/local/handoffs/demo/handoff.zip", rendered)
+        self.assertNotIn("baseline  main", rendered)
         self.assertIn("commits  0 / 3", rendered)
         self.assertIn("Next", rendered)
         self.assertIn("› Rerun `ekzd verify`.", rendered)
@@ -109,7 +111,7 @@ class UiTests(unittest.TestCase):
                 "session_status": "finished",
                 "project": "Demo",
                 "objective": "Change one thing",
-                "next": 'Start a new session with `ekzd start "<objective>" --branch <task-branch>`.',
+                "next": "Start a new task with `ekzd start task.toml`.",
             },
             enabled=False,
         )
@@ -124,16 +126,16 @@ class UiTests(unittest.TestCase):
             "project": "Demo",
             "objective": "Change one thing",
             "current_branch": "main",
-            "baseline_branch": "main",
             "implementation_branch": "feat/demo",
             "baseline_head": "1234567890abcdef",
+            "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
             "max_commits": 3,
             "verification": "not run",
             "blocked_reason": None,
-            "next": "Generate the implementation prompt.",
+            "next": "Transfer the existing handoff archive.",
         }
         rendered = render_status_ui(status, enabled=True)
         for label in ("project", "objective", "verification", "implementation"):
@@ -185,9 +187,9 @@ class UiTests(unittest.TestCase):
             "project": "Demo",
             "objective": "Change one thing",
             "current_branch": "main",
-            "baseline_branch": "main",
             "implementation_branch": "feat/demo",
             "baseline_head": "1234567890abcdef",
+            "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "fedcba0987654321",
             "worktree_clean": True,
             "commit_count": 4,
