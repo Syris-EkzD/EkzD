@@ -36,7 +36,10 @@ class CliFlowTests(unittest.TestCase):
             local.mkdir()
             draft = local / 'task-a.toml'
             draft.write_text(task_text(include=['app.py'], sources=['app.py']))
-            cli('start', str(draft))
+            started = cli('start', str(draft))
+            self.assertIn('contract ID', started)
+            self.assertIn('handoff.zip', started)
+            self.assertIn('run.py prepare', started)
             state = json.loads((local / 'session.json').read_text())
             frozen = state['contract_id']
             with tempfile.TemporaryDirectory() as extracted:

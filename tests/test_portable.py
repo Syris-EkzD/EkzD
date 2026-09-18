@@ -80,3 +80,39 @@ class PortableTests(unittest.TestCase):
         (self.root / 'future_test.py').write_text('assert True\n')
         self.git('add', '.'); self.git('commit', '-qm', 'future test implemented')
         self.assertEqual(0, self.run_portable(location, 'check', '--final').returncode)
+
+    def test_runtime_build_is_checked_even_with_consistent_file_hashes(self):
+        import hashlib
+        from ekzd.contract import canonical_bytes
+        location = self.bundle(self.freeze())
+        source = location / 'runtime/ekzd/core.py'
+        source.write_bytes(source.read_bytes() + b'\n# different build\n')
+        manifest_path = location / 'handoff.json'
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest['files']['runtime/ekzd/core.py'] = hashlib.sha256(source.read_bytes()).hexdigest()
+        manifest_path.write_bytes(canonical_bytes(manifest))
+        result = self.run_portable(location, 'prepare')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('runtime identity mismatch', result.stderr)
+
+    def test_malformed_payload_and_symlinks_are_rejected(self):
+        location = self.bundle(self.freeze())
+        unexpected = location / 'unexpected'
+        unexpected.write_text('not in manifest')
+        self.assertNotEqual(0, self.run_portable(location, 'prepare').returncode)
+        unexpected.unlink()
+        unexpected.symlink_to('/etc/passwd')
+        result = self.run_portable(location, 'check')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('symlinks', result.stderr)
+
+    def test_handoff_mutation_stops_later_verification(self):
+        location = Path(self.temp.name) / 'extracted'
+        script = f"open({str(location / 'instructions.md')!r}, 'w').write('changed')"
+        c = self.freeze([dict(name='mutate handoff', command=['python3', '-c', script]),
+                         dict(name='must not run', command=['python3', '-c', "open('later', 'w').write('bad')"])])
+        self.bundle(c)
+        result = self.run_portable(location, 'check')
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse((self.root / 'later').exists())
+        self.assertIn('Handoff', result.stdout)
