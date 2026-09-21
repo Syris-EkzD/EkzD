@@ -152,6 +152,25 @@ class CliPresentationTests(unittest.TestCase):
         self.assertIn("✗ tests", stdout)
         self.assertIn("✗ Verification failed", stdout)
 
+    def test_verify_failure_prints_captured_diagnostics_and_preserves_exit_code(self) -> None:
+        verification = {
+            "passed": False,
+            "steps": [
+                {"name": "verification:tests", "status": "FAIL",
+                 "message": "Verification command exited with status 1.",
+                 "details": {"stderr": "Traceback: assertion failed\nline two",
+                             "stdout": "Ran 1 test"}},
+            ],
+        }
+        with mock.patch.object(cli, "verify_session", return_value=verification):
+            code, stdout, stderr = self._run(["verify"])
+        self.assertEqual(1, code)
+        self.assertEqual("", stderr)
+        self.assertIn("✗ verification:tests: Verification command exited with status 1.", stdout)
+        self.assertIn("    stderr:\n      Traceback: assertion failed\n      line two", stdout)
+        self.assertIn("    stdout:\n      Ran 1 test", stdout)
+        self.assertIn("✗ Verification failed", stdout)
+
     def test_harness_errors_remain_on_stderr(self) -> None:
         with mock.patch.object(cli, "build_workflow_status", side_effect=HarnessError("blocked")):
             code, stdout, stderr = self._run(["status"])
