@@ -124,7 +124,7 @@ class AuthorityHistoryTests(unittest.TestCase):
         self.assertEqual('', self.git('diff', '--name-only', '--', 'secret'))
         self.both_reject('Git content filters are unsupported')
 
-    def test_budget_counts_history_with_no_universal_twenty_ceiling(self):
+    def test_configured_lower_commit_ceiling_counts_history(self):
         self.start(max_commits=21)
         for i in range(21):
             self.git('commit', '--allow-empty', '-qm', f'candidate {i}')

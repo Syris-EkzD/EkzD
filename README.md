@@ -36,7 +36,7 @@ name = "Example"
 protected = []
 exclude = []
 guidance = []
-max_commits = 20
+max_commits = 50
 # Add at least one required verification step before starting a task.
 #
 # [[verification]]
@@ -77,7 +77,7 @@ Project fields are:
 - `schema_version = 2`
 - non-empty `name`
 - optional `protected`, `exclude`, and `guidance` arrays
-- positive `max_commits` (default 20)
+- positive `max_commits` (default and safety ceiling 50)
 - optional `[[readiness]]` probes
 - at least one required `[[verification]]` step before a task can start
 
@@ -109,7 +109,7 @@ command = ["python3", "-m", "unittest", "tests.registration.test_validation"]
 
 Required task fields are `schema_version`, `objective`, `branch`, non-empty `include`, and non-empty `acceptance`.
 
-Task exclusions extend project exclusions. Project protections cannot be removed by a task. Guidance, readiness, and verification are additive. A task-specific commit budget overrides the project default. Declared source files must exist as regular files at the frozen baseline.
+Task exclusions extend project exclusions. Project protections cannot be removed by a task. Guidance, readiness, and verification are additive. A task-specific commit limit overrides the project default, while values above 50 resolve to the 50-commit safety ceiling. Lower explicit limits remain effective. Declared source files must exist as regular files at the frozen baseline.
 
 ## 3. Start and transfer the handoff
 
@@ -150,6 +150,8 @@ python3 /path/to/handoff/run.py check --json
 
 # Implement, test, fix, and self-review.
 git add <scoped-files>
+# Commit coherent, logically focused milestones; avoid unrelated batching and
+# noisy WIP/checkpoint/fixup commits.
 git commit -m "feat: validate registration"
 
 python3 /path/to/handoff/run.py check --final --json
@@ -160,6 +162,8 @@ The worker does not need an installed EkzD package. The launcher isolates and ve
 `prepare` requires the declared branch at the exact clean baseline and runs frozen readiness probes only. Development `check` permits dirty scoped work. `check --final` requires a clean committed candidate on the declared implementation branch. Every check repeats readiness before correctness verification.
 
 PASS, FAIL, and UNAVAILABLE remain distinct. Required FAIL or UNAVAILABLE results block handoff readiness.
+
+Use as many small, meaningful milestone commits as the task reasonably requires. The 50-commit limit is a safety ceiling, not an expected commit count. EkzD mechanically enforces commit-count and history rules without attempting to judge commit quality.
 
 ## 5. Maintainer verification and acceptance
 

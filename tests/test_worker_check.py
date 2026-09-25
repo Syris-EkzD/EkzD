@@ -54,7 +54,7 @@ class WorkerCheckTests(unittest.TestCase):
                       'timeout_seconds = 30']
         (self.root / '.ekzd/project.toml').write_text('\n'.join(lines) + '\n')
 
-    def _write_task(self, *, baseline=None, branch='feat/task', include=None, exclude=None, max_commits=20, task_steps=None, task_step_cwds=None):
+    def _write_task(self, *, baseline=None, branch='feat/task', include=None, exclude=None, max_commits=50, task_steps=None, task_step_cwds=None):
         task = dict(schema_version=1, objective='Worker task', branch=branch,
                     include=include or ['allowed.txt'], exclude=exclude or [], acceptance=['ready'], max_commits=max_commits,
                     verification=[dict(name=name, command=command, cwd=(task_step_cwds or {}).get(name, '.'), timeout_seconds=30)

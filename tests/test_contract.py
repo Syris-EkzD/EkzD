@@ -27,19 +27,29 @@ class ContractTests(unittest.TestCase):
 
     def test_determinism_normalizes_defaults_and_scope_order(self):
         a = self.compose(project(exclude=["b", "a", "b"]))
-        b = self.compose(project(exclude=["a", "b"], max_commits=20))
+        b = self.compose(project(exclude=["a", "b"], max_commits=50))
         self.assertEqual(canonical_bytes(a), canonical_bytes(b))
         self.assertEqual(contract_id(a), contract_id(b))
         self.assertTrue(canonical_bytes(a).endswith(b"}\n"))
         b["objective"] = "Different"
         self.assertNotEqual(contract_id(a), contract_id(b))
 
-    def test_budget_default_override_and_no_global_ceiling(self):
+    def test_commit_limit_defaults_to_safety_ceiling_and_preserves_lower_limits(self):
+        self.assertEqual(50, self.compose()["max_commits"])
         self.assertEqual(42, self.compose(project(max_commits=42))["max_commits"])
-        self.assertEqual(80, self.compose(project(max_commits=42), task(max_commits=80))["max_commits"])
+        self.assertEqual(8, self.compose(project(max_commits=42), task(max_commits=8))["max_commits"])
+        self.assertEqual(50, self.compose(project(max_commits=80))["max_commits"])
+        self.assertEqual(50, self.compose(project(max_commits=42), task(max_commits=80))["max_commits"])
+        self.assertEqual(50, parse_project(project(max_commits=80))["max_commits"])
+        self.assertEqual(50, parse_task(task(max_commits=80))["max_commits"])
         for value in (0, -1, True, 1.5):
             with self.assertRaises(HarnessError):
                 parse_task(task(max_commits=value))
+
+        contract = self.compose()
+        contract["max_commits"] = 51
+        with self.assertRaisesRegex(HarnessError, "50-commit safety ceiling"):
+            validate_contract(contract)
 
     def test_closed_schemas_and_versions(self):
         for parser, data, key in ((parse_project, project(), "excludes"), (parse_task, task(), "protected"),

@@ -18,7 +18,8 @@ from .core import HarnessError, run_git_bytes
 PROJECT_VERSION = 2
 TASK_VERSION = 1
 CONTRACT_VERSION = 2
-DEFAULT_MAX_COMMITS = 20  # A default, never a universal ceiling.
+MAX_COMMIT_CEILING = 50
+DEFAULT_MAX_COMMITS = MAX_COMMIT_CEILING
 BUILTIN_PROTECTED = [".ekzd/project.toml", ".ekzd/local/", ".ekzd/session.json"]
 LEGACY_MESSAGE = "Unsupported legacy EkzD session/task format. Remove the old local session and start a new task with the current schema."
 
@@ -53,6 +54,10 @@ def _positive(value: Any, label: str) -> int:
     if type(value) is not int or value < 1:
         raise HarnessError(f"{label} must be a positive integer.")
     return value
+
+
+def _commit_limit(value: Any, label: str) -> int:
+    return min(_positive(value, label), MAX_COMMIT_CEILING)
 
 
 def _version(value: Any, expected: int, label: str) -> None:
@@ -92,7 +97,7 @@ def parse_project(data: Any, *, ready: bool = True) -> dict:
             "protected": sorted(set(_strings(data.get("protected", []), "project.protected", paths=True))),
             "exclude": sorted(set(_strings(data.get("exclude", []), "project.exclude", paths=True))),
             "guidance": _strings(data.get("guidance", []), "project.guidance"),
-            "max_commits": _positive(data.get("max_commits", DEFAULT_MAX_COMMITS), "project.max_commits"),
+            "max_commits": _commit_limit(data.get("max_commits", DEFAULT_MAX_COMMITS), "project.max_commits"),
             "verification": verification_steps(project_verification, required=ready),
             "readiness": verification_steps(data.get("readiness", []), label="readiness")}
 
@@ -111,7 +116,7 @@ def parse_task(data: Any) -> dict:
               "verification": verification_steps(data.get("verification", [])),
               "readiness": verification_steps(data.get("readiness", []), label="readiness")}
     if "max_commits" in data:
-        result["max_commits"] = _positive(data["max_commits"], "task.max_commits")
+        result["max_commits"] = _commit_limit(data["max_commits"], "task.max_commits")
     return result
 
 
@@ -159,7 +164,9 @@ def validate_contract(data: Any) -> dict:
         raise HarnessError("Contract must retain built-in EkzD protected paths.")
     for key in ("sources", "acceptance", "guidance"):
         _strings(data.get(key), f"contract.{key}", required=key == "acceptance", paths=key == "sources")
-    _positive(data.get("max_commits"), "contract.max_commits")
+    max_commits = _positive(data.get("max_commits"), "contract.max_commits")
+    if max_commits > MAX_COMMIT_CEILING:
+        raise HarnessError(f"contract.max_commits must not exceed the {MAX_COMMIT_CEILING}-commit safety ceiling.")
     if verification_steps(data.get("verification"), required=True) != data["verification"]:
         raise HarnessError("Contract verification steps must contain resolved defaults.")
     if verification_steps(data.get("readiness"), label="readiness") != data["readiness"]:

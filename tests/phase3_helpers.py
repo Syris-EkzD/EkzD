@@ -6,7 +6,7 @@ from ekzd import session
 from ekzd.contract import canonical_bytes
 
 
-def project_text(*, max_commits=20, exclude=(), protected=(), guidance=(), commands=None):
+def project_text(*, max_commits=50, exclude=(), protected=(), guidance=(), commands=None):
     lines = ['schema_version = 2', 'name = "Demo"', f'max_commits = {max_commits}',
              f'exclude = {json.dumps(list(exclude))}', f'protected = {json.dumps(list(protected))}',
              f'guidance = {json.dumps(list(guidance))}']
