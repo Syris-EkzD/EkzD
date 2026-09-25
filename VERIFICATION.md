@@ -57,8 +57,9 @@ to survive in the implementation worktree when scope permits deletion or renamin
 
 ## Structural checking modes
 
-All modes validate contract identity, exact pinned EkzD identity, Linux 3.11+ runtime support, Git
-availability, supported repository state, local baseline existence, branch validity, baseline
+All modes validate contract identity, exact pinned EkzD identity, a supported Linux platform,
+Python 3.11+ runtime support, Git availability, supported repository state, local baseline existence,
+branch validity, baseline
 ancestry, fixed commit ceiling, historical/current scope, and candidate/handoff authority binding as
 appropriate.
 

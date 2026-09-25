@@ -1,4 +1,6 @@
-# EkzD
+<p align="center">
+  <img src="./assets/ekzd-terminal.svg" alt="Animated EkzD terminal banner: ekzd init types first, then the six-line 3D EkzD header and description appear line by line." width="100%">
+</p>
 
 EkzD is a deterministic structural trust layer for scoped AI-assisted work. It freezes durable
 project policy plus disposable task intent into one contract, creates a portable pinned worker

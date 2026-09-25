@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ekzd"
 dynamic = ["version"]
-description = "A small, strict development harness for scoped and verifiable AI-assisted work."
+description = "A deterministic structural trust layer for scoped AI-assisted development."
 requires-python = ">=3.11"
 dependencies = []
 
