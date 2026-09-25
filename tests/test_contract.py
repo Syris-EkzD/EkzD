@@ -5,12 +5,16 @@ from ekzd.core import HarnessError
 
 
 def project(**overrides):
-    return dict(schema_version=4, name="Example", **overrides)
+    value = dict(schema_version=4, name="Example")
+    value.update(overrides)
+    return value
 
 
 def task(**overrides):
-    return dict(schema_version=3, objective="Implement", branch="feat/task",
-                include=["src/**"], acceptance=["Works"], **overrides)
+    value = dict(schema_version=3, objective="Implement", branch="feat/task",
+                 include=["src/**"], acceptance=["Works"])
+    value.update(overrides)
+    return value
 
 
 class ContractTests(unittest.TestCase):

@@ -65,8 +65,6 @@ def check_contract(root: Path, contract: dict, *, final: bool,
             )
         if prepare and (candidate.head != contract["baseline"] or not candidate.clean):
             raise HarnessError("Preparation requires a clean candidate at the exact frozen baseline.")
-        if final:
-            require_final(candidate, contract["branch"])
 
         count = session_commit_count(root, contract["baseline"])
         if count > contract["max_commits"]:
@@ -87,6 +85,8 @@ def check_contract(root: Path, contract: dict, *, final: bool,
             violations.append(".ekzd/local/ must remain untracked")
         if violations:
             raise HarnessError("Scope/protected-path violations: " + "; ".join(violations))
+        if final:
+            require_final(candidate, contract["branch"])
         add(
             "contract-authority", "PASS",
             "Baseline, branch, commit ceiling and scope satisfy frozen authority.",

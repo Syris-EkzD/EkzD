@@ -55,7 +55,7 @@ class HandoffTests(unittest.TestCase):
                 '## Verification boundary', 'structural verification only', 'belong to CI',
                 'run.py prepare', 'run.py check', 'run.py check --final',
                 'meaningful implementation milestones', 'Conventional Commit',
-                'does not judge commit meaning', 'required CI checks', 'exact published candidate',
+                'does not judge commit meaning', 'CI checks for the exact published candidate',
                 'Do not widen the frozen task authority', 'Do not install missing capabilities',
                 'requirements are ambiguous', 'unauthorized scope', 'Do not merge',
                 'Exact branch', 'Exact commit', 'Contract ID', 'EkzD final structural check result',
