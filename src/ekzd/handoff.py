@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import shutil
 import tempfile
 import zipfile
@@ -91,7 +92,7 @@ Obtain the target repository checkout separately; this archive contains no repos
 Extract this handoff outside tracked candidate files. Create the declared implementation branch at
 the exact baseline, then run:
 
-    git switch -c {contract['branch']} {contract['baseline']}
+    git switch -c {shlex.quote(contract['branch'])} {contract['baseline']}
     python3 /path/to/handoff/run.py prepare
     python3 /path/to/handoff/run.py check
 

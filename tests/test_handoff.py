@@ -1,5 +1,6 @@
 import copy
 import io
+import shlex
 import tempfile
 import unittest
 import zipfile
@@ -8,7 +9,7 @@ from unittest import mock
 
 from ekzd import handoff
 from ekzd.core import HarnessError
-from ekzd.contract import compose_contract
+from ekzd.contract import compose_contract, validate_branch
 from ekzd.identity import runtime_identity
 from test_contract import project, task
 
@@ -68,6 +69,27 @@ class HandoffTests(unittest.TestCase):
                 'Exact branch', 'Exact commit', 'Contract ID', 'Verification result',
                 'Changed files', 'Unresolved issues and review notes'):
             self.assertIn(expected, rendered)
+
+    def test_instructions_shell_quote_git_valid_branch_as_one_literal_argument(self):
+        branch = 'feat/task$(printf-owned)'
+        validate_branch(self.root, branch)
+        task_data = task()
+        task_data['branch'] = branch
+        contract = compose_contract(
+            project(),
+            task_data,
+            'a' * 40,
+            runtime_identity(),
+        )
+
+        rendered = handoff.instructions(contract).decode('utf-8')
+        command = next(
+            line.strip() for line in rendered.splitlines()
+            if line.strip().startswith('git switch -c '))
+
+        self.assertEqual(['git', 'switch', '-c', branch, contract['baseline']], shlex.split(command))
+        self.assertIn(shlex.quote(branch), command)
+        self.assertEqual(rendered, handoff.instructions(copy.deepcopy(contract)).decode('utf-8'))
 
     def test_archive_is_deterministic_and_has_only_controlled_members(self):
         files = handoff.build_payload(self.contract)
