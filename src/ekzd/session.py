@@ -213,7 +213,7 @@ def finish_session(root: Path, *, accept: bool) -> dict:
             raise HarnessError("Acceptance blocked: verification has not passed.")
         if verification.get("contract_id") != state["contract_id"] or verification.get("candidate") != candidate.binding():
             raise HarnessError("Acceptance blocked: stale candidate/contract evidence; rerun verification.")
-        result = check_contract(root, contract, final=True, run_commands=False)
+        result = check_contract(root, contract, final=True)
         if not result["ready"]:
             raise HarnessError("Acceptance blocked: " + "; ".join(item["message"] for item in result["checks"] if item["status"] in {"FAIL", "UNAVAILABLE"}))
         if capture_candidate(root) != candidate or state_digest(root) != digest:

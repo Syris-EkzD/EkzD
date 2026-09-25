@@ -22,20 +22,6 @@ def _instruction_list(items: list[str]) -> str:
     return "\n".join(f"- {json.dumps(item, ensure_ascii=False)}" for item in items)
 
 
-def _instruction_steps(steps: list[dict]) -> str:
-    if not steps:
-        return "- None declared."
-    rendered = []
-    for index, step in enumerate(steps, 1):
-        rendered.extend([
-            f"{index}. Name: {json.dumps(step['name'], ensure_ascii=False)}",
-            f"   - Command argv: {json.dumps(step['command'], ensure_ascii=False)}",
-            f"   - Working directory: {json.dumps(step['cwd'], ensure_ascii=False)}",
-            f"   - Timeout: {step['timeout_seconds']} seconds",
-        ])
-    return "\n".join(rendered)
-
-
 def instructions(contract: dict) -> bytes:
     sources = ""
     if contract['sources']:
@@ -78,13 +64,12 @@ worker-facing rendering.
 
 {_instruction_list(contract['acceptance'])}
 {sources}{guidance}
-## Readiness checks
+## Verification boundary
 
-{_instruction_steps(contract['readiness'])}
-
-## Verification checks
-
-{_instruction_steps(contract['verification'])}
+EkzD performs structural verification only: frozen baseline, declared branch, scope, protected and
+excluded paths, history, commit ceiling, candidate cleanliness, and exact candidate binding.
+Project-specific formatting, linting, static analysis, tests, builds, dependency checks, and similar
+correctness checks belong to CI or another external verification system and are not executed by EkzD.
 
 ## Worker flow
 
@@ -96,18 +81,24 @@ the exact baseline, then run:
     python3 /path/to/handoff/run.py prepare
     python3 /path/to/handoff/run.py check
 
-Implement, run iterative `check` commands, fix failures, and self-review. Commit at small,
-meaningful implementation milestones. Keep each commit logically focused; avoid batching unrelated
-or excessive work into one large commit and avoid noisy WIP, checkpoint, or fixup commits. Use as
-many coherent commits as the task reasonably requires, up to the effective commit ceiling. EkzD
-mechanically enforces commit-count and history rules; it does not judge commit meaning.
+Implement and self-review. Run iterative `check` commands to catch scope, history, branch, and
+authority violations while working. Commit at small, meaningful implementation milestones. Keep
+each commit logically focused; avoid batching unrelated or excessive work into one large commit and
+avoid noisy WIP, checkpoint, or fixup commits. Prefer Conventional Commit messages such as
+`feat(scope): description` when a meaningful scope exists; omit the scope when it adds no useful
+context. Use as many coherent commits as the task reasonably requires, up to the effective commit
+ceiling. EkzD mechanically enforces commit-count and history rules; it does not judge commit meaning.
 
 When the candidate is complete, clean, and committed, run:
 
     python3 /path/to/handoff/run.py check --final
 
-Preparation probes capabilities only; correctness verification may depend on files the task will
-create. Every check repeats readiness before verification.
+After the final EkzD PASS, publish/update the implementation branch and pull request using the
+available external workflow. Do not treat the implementation session as complete until all required
+CI checks for the exact published candidate have completed successfully. If CI fails, inspect the
+CI evidence, fix the candidate within the frozen authority, rerun EkzD checks, publish the new exact
+candidate, and wait for CI again. If CI cannot be observed or required checks cannot run, report the
+blocker instead of claiming completion.
 
 ## Escalation rules
 
@@ -121,7 +112,8 @@ create. Every check repeats readiness before verification.
 - Exact branch.
 - Exact commit.
 - Contract ID.
-- Verification result, including the final check result.
+- EkzD final structural check result.
+- Required CI status/checks for the exact returned commit.
 - Changed files.
 - Unresolved issues and review notes.
 

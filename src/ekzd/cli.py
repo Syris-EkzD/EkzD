@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                     "Project harness created",
                     tone="success",
                     details=[("path", str(path.relative_to(root)))],
-                    next_action="Configure durable project verification/protections once, commit policy, then write a local task.",
+                    next_action="Configure durable scope/protection guidance once, commit policy, then write a local task.",
                     enabled=color,
                 ),
                 end="",

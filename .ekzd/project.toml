@@ -1,40 +1,12 @@
-schema_version = 3
+schema_version = 4
 name = "EkzD"
 protected = [".github/"]
 exclude = []
 guidance = [
   "Keep EkzD deterministic and project-agnostic; use only the Python standard library.",
   "Preserve exact candidate binding and fail closed when required evidence is unavailable.",
-  "Use coherent Conventional Commits at small, meaningful implementation milestones. Keep commits logically focused; avoid batching unrelated changes into one commit and avoid noisy WIP/checkpoint commits.",
+  "Use coherent Conventional Commits at small, meaningful implementation milestones. Keep commits logically focused; avoid batching unrelated changes into one commit and avoid noisy WIP/checkpoint/fixup commits.",
+  "Treat EkzD as structural authority verification only; project correctness belongs to CI or another external verifier.",
+  "Do not claim implementation completion until required CI checks pass for the exact published candidate.",
   "Retain human merge authority.",
 ]
-
-[[verification]]
-name = "compile"
-command = ["python3", "-m", "compileall", "-q", "src", "tests"]
-cwd = "."
-timeout_seconds = 120
-
-[[verification]]
-name = "tests"
-command = ["env", "PYTHONPATH=src", "python3", "-m", "unittest", "discover", "-s", "tests", "-v"]
-cwd = "."
-timeout_seconds = 600
-
-[[verification]]
-name = "cli-help"
-command = ["env", "PYTHONPATH=src", "python3", "-m", "ekzd.cli", "--help"]
-cwd = "."
-timeout_seconds = 120
-
-[[verification]]
-name = "cli-version"
-command = ["env", "PYTHONPATH=src", "python3", "-m", "ekzd.cli", "--version"]
-cwd = "."
-timeout_seconds = 120
-
-[[verification]]
-name = "handoff-help"
-command = ["env", "PYTHONPATH=src", "python3", "-m", "ekzd.cli", "handoff", "--help"]
-cwd = "."
-timeout_seconds = 120

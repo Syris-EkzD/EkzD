@@ -221,14 +221,7 @@ def init_project(root: Path, name: str | None = None) -> Path:
         raise HarnessError("Project name cannot be empty.")
     path.write_text(
         f'schema_version = {PROJECT_VERSION}\nname = {json.dumps(project_name)}\n'
-        'protected = []\nexclude = []\nguidance = []\n'
-        '# Add at least one required verification step before starting a task.\n'
-        '#\n'
-        '# [[verification]]\n'
-        '# name = "tests"\n'
-        '# command = ["..."]\n'
-        '# cwd = "."\n'
-        '# timeout_seconds = 600\n', encoding="utf-8")
+        'protected = []\nexclude = []\nguidance = []\n', encoding="utf-8")
     gitignore = root / ".gitignore"
     if gitignore.is_symlink():
         raise HarnessError(".gitignore must not be a symlink.")
