@@ -1,90 +1,143 @@
-# EkzD Verification and Acceptance Standard
+# EkzD Structural Verification and Acceptance Standard
 
-This document describes the current frozen-contract workflow. Old project/task/session authority formats are unsupported; start a new task with the current schemas.
+EkzD is a deterministic structural trust layer. It verifies authority and exact-candidate evidence;
+external CI verifies machine-checkable project correctness; maintainers and humans retain semantic
+review and merge authority.
 
-## Verification
+Old project/task/contract authority formats are unsupported. Refreeze with the current schemas.
 
-EkzD uses one raw candidate snapshot primitive and one verification-command evaluator for worker and maintainer evidence. The binding includes HEAD, branch, stage-zero index blob identities and modes, tracked working-file bytes/modes (including deletions), symlink values without following targets, and non-ignored untracked paths/contents. Paths are byte-preserving and fields are length-delimited. Conflicted index stages are rejected. Textconv and external diff programs do not define candidate evidence or scope. Final cleanliness additionally requires raw working-file content and executable modes to match the index, and the index to match HEAD; Git checkout transformations do not qualify as clean merely because Git status hides them.
+## Candidate evidence
 
-Both `ekzd verify` and `python3 run.py check --final` require the declared implementation branch, a fully committed clean candidate, and no conflicts or in-progress merge/rebase/cherry-pick/revert/bisect operation. Submodules, shallow repositories, sparse checkout, replacement refs/grafts, hidden index flags, active tracked content filters, and special/nested candidate paths are rejected. Worker development checking may include dirty candidate files but does not relax unsupported-state checks.
+EkzD uses one raw candidate snapshot primitive for worker and maintainer evidence. Its binding
+includes HEAD, branch, stage-zero index blob identities and modes, tracked working-file bytes and
+modes (including deletions), symlink values without following targets, and non-ignored untracked
+paths and contents. Paths are byte-preserving and fields are length-delimited. Git textconv and
+external diff programs do not define evidence or scope.
 
-The initial candidate is retained throughout verification. Each command is bracketed by snapshots, and completion compares against that same initial binding. Persistent mutation or lost candidate trust fails the attempt, stops further command execution, and leaves mutations visible. Ordinary nonzero command failures may continue to later checks while repository trust remains intact, so independent failures can be reported together. Maintainer verification clears prior success before executing commands; acceptance requires the new candidate binding and rechecks it before recording the accepted HEAD. Older verification evidence must be regenerated.
+Final cleanliness requires raw working files and executable modes to match the index, and the index
+to match HEAD. Checkout transformations do not count as clean merely because normal Git status hides
+them. Development checking may bind dirty candidate files, but only when all changed and historical
+paths comply with frozen scope.
 
-Sources are validated as regular files at the frozen baseline, not as files required to survive in the implementation worktree. Source deletion or renaming remains subject to ordinary scope rules.
+Submodules, shallow repositories, sparse checkout, replacement refs/grafts, hidden index flags,
+active tracked content filters, conflicted stages, special/nested candidate paths, detached final
+candidates, and in-progress merge/rebase/cherry-pick/revert/bisect operations are rejected.
 
-Verification commands run directly from argv arrays, without a shell, through the shared evaluator. On Linux each command is launched in its own process group. If a command times out, EkzD terminates that process group, waits briefly, sends a kill signal if needed, and then recaptures candidate state before deciding whether evaluation can continue. Keyboard interruption performs the same owned-process cleanup before propagating. This does not contain intentionally daemonized descendants that deliberately escape the process group.
-
-Verifier stdout and stderr are retained with a fixed bound. EkzD keeps diagnostic output from both streams, marks truncation explicitly, and decodes invalid UTF-8 with replacement characters rather than crashing or buffering unbounded output.
-
-Snapshots assume quiescent local work and do not defend against hostile concurrent processes or transient modify-and-restore activity. Ignored files, external link targets, toolchains, and services remain outside the binding. EkzD does not provide environment reproducibility.
+Snapshots assume quiescent local work and do not defend against hostile same-user processes or
+transient modify-and-restore activity. Ignored files and external symlink targets are outside the
+binding.
 
 ## Frozen authority
 
-At `ekzd start task.toml`, EkzD validates a clean supported baseline and the committed durable `.ekzd/project.toml`, then composes it with disposable task intent and the executing runtime identity. Project schema 3 and task-authoring schema 2 are closed TOML objects. See [README.md](README.md#project-setup-and-repeated-tasks) for their complete shapes and composition rules.
+At `ekzd start`, EkzD requires a clean supported baseline and committed clean project policy. It
+combines closed project schema v4 and task schema v3 into canonical contract schema v3. The frozen
+contract contains:
 
-The result is one contract-version-2 JSON object. It includes baseline, branch, project name and normalized configuration digest, objective, resolved include/exclude/protected patterns, baseline sources, acceptance, additive guidance, the fixed commit ceiling, full ordered readiness and verification plans and exact EkzD identity. It does not refer back to the original task file. Neither worker nor maintainer reconstructs authority from mutable inputs after freezing.
+- exact baseline and declared implementation branch;
+- project name and normalized project-policy SHA-256;
+- objective;
+- sorted unique include, exclude, and protected patterns;
+- baseline source/reference paths;
+- ordered acceptance criteria and additive project/task guidance;
+- fixed 50-commit safety ceiling; and
+- exact EkzD version/build SHA-256.
 
-Canonical JSON is UTF-8 with sorted object keys, compact separators, unescaped Unicode, and exactly one trailing LF. Scope patterns are sorted/unique; ordered prose and command lists retain order. The SHA-256 of these bytes is the contract ID, stored alongside the contract in local metadata. It is a checksum, not a signature. The handoff accepts no legacy TOML manifests or alternate contract versions. Worker input must use the generated canonical contract.
+No schema accepts `verification` or `readiness`. The frozen contract contains no arbitrary command,
+toolchain, dependency, test, lint, formatting, analysis, or build plan.
 
-Project protections/exclusions cannot be weakened by task fields. Task commands append to required project commands, never replace them. Project and task guidance append; acceptance/guidance remain human/AI instructions rather than semantically checked predicates. The frozen contract always contains EkzD's fixed 50-commit safety ceiling; project and task authoring schemas do not expose commit-limit configuration. EkzD enforces commit count and history mechanically and does not evaluate whether commits are semantically meaningful.
+Canonical JSON is UTF-8 with sorted object keys, compact separators, unescaped Unicode, and exactly
+one trailing LF. Its SHA-256 is the contract ID. This checksum is an integrity identity, not a
+signature. Worker and maintainer checks use only frozen authority; mutable authoring files are never
+reinterpreted after freezing.
 
-The exact version/build SHA-256 is frozen at start and required for worker checking, maintainer verification and acceptance. The existing source identity algorithm is unchanged: sorted package-relative Python paths with normalized source line endings, independent of installation location and Git metadata. Start bundles that executing source; the portable launcher re-executes Python with `-I -S`, inserts only its bundled runtime and verifies import location/build identity. Normal installed packages, PYTHONPATH and candidate EkzD source cannot replace it. Remotes are not part of authority and are not captured.
+Project protections and exclusions cannot be weakened by task fields. Project and task guidance
+append. Acceptance and guidance remain instructions for humans/workers, not mechanically evaluated
+semantic predicates. Declared sources are validated as regular files at the baseline, not required
+to survive in the implementation worktree when scope permits deletion or renaming.
 
-## Lifecycle evidence
+## Structural checking modes
 
-`.ekzd/local/session.json` atomically stores the contract, contract ID, status and lifecycle evidence. Files under `.ekzd/local/` must remain ignored/untracked. A Linux advisory lock serializes lifecycle mutations; state publication uses a same-directory temporary file, fsync and atomic replacement.
+All modes validate contract identity, exact pinned EkzD identity, Linux 3.11+ runtime support, Git
+availability, supported repository state, local baseline existence, branch validity, baseline
+ancestry, fixed commit ceiling, historical/current scope, and candidate/handoff authority binding as
+appropriate.
 
-The maintainer adapter validates the stored contract ID, clears earlier success before a new verification attempt, and guards the exact session bytes at evaluator boundaries. The stateless worker adapter guards the contract and complete handoff payload instead; it does not read maintainer session state. Changed authority stops subsequent commands. The shared checker retains the initial candidate throughout structural checks and verifier execution, including between those boundaries.
+`python3 run.py prepare` additionally requires the candidate to be at the exact clean frozen
+baseline on the declared branch. These are EkzD prerequisites. It does not inspect or install
+project-specific tools, packages, services, databases, SDKs, or frameworks.
 
-Verification records the candidate binding, contract ID and structured results. `finish --accept` requires successful evidence for that same candidate and contract, rechecks authority and final state, and records the exact accepted HEAD/candidate/contract ID. It does not rerun commands. Changing authority requires abort, edit and refreeze; a new session clears all prior evidence. Finished/aborted records remain local until the next start replaces them. There is no acceptance-history database or automatic migration.
+Development `python3 run.py check` allows legitimate dirty work and verifies that the exact current
+Git-visible state remains within frozen structural authority.
 
-Handoff construction completes before the active session is published. The archive created by
-`ekzd start` is the ordinary worker input; `ekzd handoff` only recreates or copies that retained
-archive and is not another freeze/export step. The local record binds contract ID, archive SHA-256
-and payload-manifest SHA-256. Failed construction leaves no new active session or partial archive.
-Re-export reads retained payload rather than current inputs/runtime.
-ZIP members are sorted POSIX relative paths with timestamp 1980-01-01, regular-file mode 0644,
-no extra/comment fields and stored (uncompressed) bytes. Caches, symlinks and special files are not
-included. The canonical handoff manifest hashes every payload file, including contract and launcher.
-The launcher validates it before importing the runtime and again at evaluation boundaries.
+`python3 run.py check --final` and maintainer `ekzd verify` require a clean fully committed candidate
+on the declared implementation branch and bind PASS to that exact candidate and contract.
 
-`prepare` validates Linux/Python/Git, supported checkout, local baseline availability, exact clean
-baseline HEAD, declared branch and frozen runtime/payload identity. It runs additive readiness
-probes only; task correctness tests may depend on future implementation files. Worker development
-and final checks, and maintainer verification, repeat readiness before correctness commands.
-Unavailable probes stop correctness execution; candidate mutation remains a trust failure. Probes
-use the shared direct-argv runner and must be authored as read-only checks. They are not sandboxed
-from ignored files or external services. Acceptance retains the existing exact-evidence model and
-does not rerun commands.
+The shared checker retains its initial candidate binding through all structural operations and
+recaptures before returning. Authority guards bind worker checks to exact contract/handoff bytes and
+maintainer checks to exact local session bytes. A changed candidate, runtime, handoff, contract, or
+session fails the attempt instead of being silently rebound.
 
-Integrity checks are not signatures: replacement of the launcher/manifest together by a hostile
-operator is outside the trust model. Runtime isolation does not defend against malicious Python
-startup customization already executed before `run.py`, a compromised Python binary, or arbitrary
-same-user interference. Ordinary package-resolution conflicts are isolated.
+No structural mode executes project-specific commands.
 
 ## Scope and historical evidence
 
-Task `include` is a required allowlist. Resolved `exclude` is the union of project and task exclusions; `protected` adds permanent project protections to `.ekzd/project.toml`, `.ekzd/local/`, and the legacy `.ekzd/session.json`. Exclusion/protection always wins over inclusion.
+Task `include` is a required allowlist. Effective `exclude` is the union of project and task
+exclusions. Effective `protected` adds project protections to `.ekzd/project.toml`, `.ekzd/local/`,
+and legacy `.ekzd/session.json`. Exclusion/protection wins over inclusion.
 
-Directory patterns ending in `/` match that directory and descendants. Other patterns use case-sensitive Python fnmatch matching, where `*` may match `/`; `**` is not a separate recursive matching language. Paths must be repository-relative without traversal components.
+Directory patterns ending in `/` match that directory and descendants. Other patterns use
+case-sensitive Python `fnmatch`; `*` may match `/`, and `**` is not a separate recursive language.
+Paths must be repository-relative without traversal.
 
-Scope includes all paths touched in commits between baseline and HEAD, including merge/side history and reverted changes, plus current candidate changes. Git paths are NUL-delimited; renames are inspected as source and destination changes. A later revert cannot erase unauthorized history. Commit counts include all commits reachable from HEAD but not baseline, and the baseline must remain an ancestor.
+Scope includes every path touched by every commit between baseline and HEAD, including merge/side
+history and reverted changes, plus current staged, unstaged, deleted, and non-ignored untracked
+candidate paths. Renames expose source and destination. A later revert cannot erase an unauthorized
+historical change. The baseline must remain an ancestor, and all commits reachable from HEAD but not
+baseline count toward the fixed 50-commit ceiling.
 
-An implementation may delete or rename a declared source if scope permits; source existence is checked at baseline. Ignored drafts and lifecycle files are not implementation changes, but tracking them or touching protected local paths in candidate history is rejected.
+## Portable handoff and runtime identity
 
-## Acceptance and limitations
+The portable archive contains canonical contract and instructions, a minimal launcher, manifest,
+and exact pinned EkzD source. Archive/member ordering, timestamps, modes, paths, and bytes are
+deterministic. The manifest hashes each payload member. The launcher re-executes Python with `-I -S`,
+loads only the bundled runtime, verifies import location/build identity, and validates payload
+integrity before import and at checking boundaries. Installed packages, `PYTHONPATH`, and candidate
+EkzD source cannot replace the pinned runtime.
 
-Acceptance requires:
+The worker needs only EkzD prerequisites—supported Linux, Python 3.11+, Git—the repository, and the
+portable handoff. External CI is responsible for provisioning every project-specific dependency and
+toolchain.
 
-1. an active valid local record and explicit `--accept`;
-2. matching frozen runtime identity;
-3. the declared branch, supported repository state, clean committed candidate and baseline ancestry;
-4. frozen scope, protections and fixed commit ceiling satisfied;
-5. successful maintainer verification bound to the exact contract ID and initial candidate;
-6. those bindings still unchanged before acceptance is written.
+## Independent maintainer evidence and acceptance
 
-The checksum is not authentication. EkzD assumes the maintainer supplies trusted contract bytes to the worker; the maintainer independently verifies against their own frozen record. An altered worker contract or forged worker PASS cannot replace this local acceptance evidence.
+`.ekzd/local/session.json` atomically stores the contract, contract ID, handoff identity, status,
+verification, and acceptance evidence. `.ekzd/local/` must remain ignored and untracked. A Linux
+advisory lock serializes lifecycle changes.
 
-Passing does not prove semantic correctness, complete tests, compliance with prose guidance, environment reproducibility or human review. Ignored files (including build artifacts), external symlink targets, toolchains, services and environment variables are not candidate-bound. A verifier consulting them does not add them to the snapshot. Persistent changes at evaluation boundaries are detected; transient modify/restore activity and hostile same-user control are outside the model.
+`ekzd verify` clears earlier success before each attempt and independently performs final structural
+checking against the maintainer's frozen authority. Its record binds the exact contract ID and raw
+candidate binding. Any candidate or authority change makes that record stale.
 
-Linux is the required platform. Process groups handle ordinary verifier descendants, not intentionally escaped daemon processes. Required unavailable verification tools remain blocking; EkzD does not install them. Human review and merge authority remain external to the harness.
+`ekzd finish --accept` requires explicit `--accept`, active valid frozen state, fresh successful
+maintainer structural verification for the exact candidate/contract, and one more structural and
+binding check before recording the accepted HEAD. EkzD does not inspect CI state. The maintainer must
+review external CI evidence separately, and the human retains the merge decision.
+
+## Responsibility boundary
+
+A structural PASS means only:
+
+> This exact candidate complies with the frozen EkzD authority.
+
+It does not prove builds, tests, lint, formatting, static analysis, dependencies, acceptance
+criteria, semantic correctness, architecture, code quality, security, environment reproducibility,
+or review quality.
+
+External CI or an equivalent system must run the required machine-checkable project correctness
+work for the exact candidate. CI failure loops back to scoped worker fixes, a new committed candidate,
+EkzD structural rechecking, republishing, and CI again. EkzD never queries or controls CI.
+
+The checksum is not authentication. Replacement of the launcher and manifest together by a hostile
+operator, a compromised Python or Git binary, malicious startup behavior before `run.py`, and
+hostile same-user interference are outside the trust model. Human/code review and explicit merge
+authority remain external and mandatory.
