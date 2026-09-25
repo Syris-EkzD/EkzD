@@ -20,7 +20,7 @@ def build_workflow_status(root: Path) -> dict:
     result.update(implementation_branch=contract["branch"], baseline_head=contract["baseline"],
                   handoff_path=str(root / state["handoff"]["path"]),
                   max_commits=contract["max_commits"], verification="not run",
-                  next="Transfer the existing handoff archive; worker runs `python3 /path/to/handoff/run.py prepare`. Independently run `ekzd verify` on return.")
+                  next="Transfer the existing handoff archive; worker runs `python3 /path/to/handoff/run.py prepare`. After external CI passes the exact candidate, independently run `ekzd verify`.")
     try:
         if runtime_identity() != contract["ekzd"]:
             raise HarnessError("Executing runtime differs from the frozen contract; use the pinned build.")
@@ -36,7 +36,7 @@ def build_workflow_status(root: Path) -> dict:
             elif verification["candidate"] != candidate.binding() or verification["contract_id"] != state["contract_id"]:
                 result.update(verification="stale", next="Candidate or contract changed; rerun `ekzd verify`.")
             else:
-                result.update(verification="passed", next="Review the exact candidate, then run `ekzd finish --accept`.")
+                result.update(verification="passed", next="Confirm external CI for the exact candidate, review it, then run `ekzd finish --accept`.")
     except (HarnessError, BuildIdentityUnavailable) as exc:
         result.update(verification="blocked", blocked_reason=str(exc), next="Resolve the reported repository blocker before verification.")
     return result

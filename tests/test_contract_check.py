@@ -1,4 +1,3 @@
-import json
 import subprocess
 import tempfile
 import unittest
@@ -7,7 +6,6 @@ from unittest import mock
 
 from ekzd import contract_check
 from ekzd.contract import canonical_bytes, compose_contract
-from ekzd.core import HarnessError
 from ekzd.identity import runtime_identity
 from ekzd.worker import run_worker_check
 from test_contract import project, task
@@ -21,7 +19,7 @@ class FrozenCheckTests(unittest.TestCase):
         self.root.mkdir()
         for args in (("init", "-qb", "main"), ("config", "user.name", "Test"), ("config", "user.email", "test@example.invalid")):
             self.git(*args)
-        (self.root / "file").write_text("good")
+        (self.root / "file").write_text("good", encoding="utf-8")
         self.git("add", ".")
         self.git("commit", "-qm", "baseline")
         self.baseline = self.git("rev-parse", "HEAD")
@@ -31,51 +29,25 @@ class FrozenCheckTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(["git", *args], cwd=self.root, stderr=subprocess.PIPE, text=True).strip()
 
-    def freeze(self, steps=None):
-        p = project()
-        if steps:
-            p["verification"] = steps
-        t = task()
-        t["include"] = ["*"]
-        c = compose_contract(p, t, self.baseline, runtime_identity())
-        self.path.write_bytes(canonical_bytes(c))
-        return c
+    def freeze(self):
+        task_data = task()
+        task_data["include"] = ["*"]
+        contract = compose_contract(project(), task_data, self.baseline, runtime_identity())
+        self.path.write_bytes(canonical_bytes(contract))
+        return contract
 
     def test_clean_and_dirty_modes_bind_initial_state(self):
         self.freeze()
         self.assertTrue(run_worker_check(self.root, self.path, final=True)["ready"])
-        (self.root / "file").write_text("dirty")
+        (self.root / "file").write_text("dirty", encoding="utf-8")
         self.assertTrue(run_worker_check(self.root, self.path)["ready"])
         self.assertFalse(run_worker_check(self.root, self.path, final=True)["ready"])
 
-    def test_precheck_to_evaluator_mutation_is_not_rebound(self):
-        self.freeze()
-        original = contract_check.evaluate_candidate
-        def mutate(*args, **kwargs):
-            (self.root / "file").write_text("different")
-            return original(*args, **kwargs)
-        with mock.patch.object(contract_check, "evaluate_candidate", side_effect=mutate):
-            result = run_worker_check(self.root, self.path, final=True)
-        self.assertFalse(result["ready"])
-        self.assertTrue(result["git"]["clean"])
-        self.assertIn("between evaluation boundaries", json.dumps(result))
-
-    def test_authority_mutation_stops_subsequent_commands(self):
-        self.freeze([
-            dict(name="change contract", command=["python3", "-c", f"open({str(self.path)!r}, 'w').write('changed')"]),
-            dict(name="must not run", command=["python3", "-c", "open('later', 'w').write('bad')"]),
-        ])
-        result = run_worker_check(self.root, self.path, final=True)
-        self.assertFalse(result["ready"])
-        self.assertFalse((self.root / "later").exists())
-        self.assertIn("Frozen contract changed", json.dumps(result))
-
-    def test_runtime_mismatch_stops_before_commands(self):
-        c = self.freeze([dict(name="never", command=["python3", "-c", "open('later', 'w').write('bad')"])])
-        c["ekzd"]["build_sha256"] = "0" * 64
-        self.path.write_bytes(canonical_bytes(c))
+    def test_runtime_mismatch_blocks_structural_check(self):
+        contract = self.freeze()
+        contract["ekzd"]["build_sha256"] = "0" * 64
+        self.path.write_bytes(canonical_bytes(contract))
         self.assertFalse(run_worker_check(self.root, self.path)["ready"])
-        self.assertFalse((self.root / "later").exists())
 
     def test_remotes_are_not_authority(self):
         self.freeze()
@@ -83,18 +55,21 @@ class FrozenCheckTests(unittest.TestCase):
             self.git("config", "remote.origin.url", url)
             self.assertTrue(run_worker_check(self.root, self.path, final=True)["ready"])
 
-    def test_missing_baseline_is_unavailable_before_verifiers(self):
-        c = self.freeze([dict(name='never', command=['python3', '-c', "open('later','w').write('bad')"])])
-        c['baseline'] = '0' * 40
-        self.path.write_bytes(canonical_bytes(c))
+    def test_missing_baseline_is_unavailable(self):
+        contract = self.freeze()
+        contract["baseline"] = "0" * 40
+        self.path.write_bytes(canonical_bytes(contract))
         result = run_worker_check(self.root, self.path, final=True)
-        self.assertEqual('UNAVAILABLE', result['overall_status'])
-        self.assertFalse((self.root / 'later').exists())
+        self.assertEqual("UNAVAILABLE", result["overall_status"])
 
-    def test_unavailable_runtime_blocks_before_verifiers(self):
+    def test_unavailable_runtime_fails_closed(self):
         from ekzd.identity import BuildIdentityUnavailable
-        self.freeze([dict(name='never', command=['python3', '-c', "open('later','w').write('bad')"])])
-        with mock.patch.object(contract_check, 'runtime_identity', side_effect=BuildIdentityUnavailable('missing source')):
+
+        self.freeze()
+        with mock.patch.object(contract_check, "runtime_identity", side_effect=BuildIdentityUnavailable("missing source")):
             result = run_worker_check(self.root, self.path, final=True)
-        self.assertEqual('UNAVAILABLE', result['overall_status'])
-        self.assertFalse((self.root / 'later').exists())
+        self.assertEqual("UNAVAILABLE", result["overall_status"])
+
+
+if __name__ == "__main__":
+    unittest.main()

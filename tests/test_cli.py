@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import os
 import subprocess
 import sys
@@ -138,8 +137,8 @@ class CliPresentationTests(unittest.TestCase):
         verification = {
             "passed": False,
             "steps": [
-                {"name": "compile", "passed": True},
-                {"name": "tests", "passed": False},
+                {"name": "contract-authority", "passed": True},
+                {"name": "state-binding", "passed": False},
             ],
         }
         with mock.patch.object(cli, "verify_session", return_value=verification):
@@ -148,28 +147,9 @@ class CliPresentationTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("", stderr)
         self.assertIn("EkzD · verify", stdout)
-        self.assertIn("✓ compile", stdout)
-        self.assertIn("✗ tests", stdout)
-        self.assertIn("✗ Verification failed", stdout)
-
-    def test_verify_failure_prints_captured_diagnostics_and_preserves_exit_code(self) -> None:
-        verification = {
-            "passed": False,
-            "steps": [
-                {"name": "verification:tests", "status": "FAIL",
-                 "message": "Verification command exited with status 1.",
-                 "details": {"stderr": "Traceback: assertion failed\nline two",
-                             "stdout": "Ran 1 test"}},
-            ],
-        }
-        with mock.patch.object(cli, "verify_session", return_value=verification):
-            code, stdout, stderr = self._run(["verify"])
-        self.assertEqual(1, code)
-        self.assertEqual("", stderr)
-        self.assertIn("✗ verification:tests: Verification command exited with status 1.", stdout)
-        self.assertIn("    stderr:\n      Traceback: assertion failed\n      line two", stdout)
-        self.assertIn("    stdout:\n      Ran 1 test", stdout)
-        self.assertIn("✗ Verification failed", stdout)
+        self.assertIn("✓ contract-authority", stdout)
+        self.assertIn("✗ state-binding", stdout)
+        self.assertIn("✗ Structural verification failed", stdout)
 
     def test_harness_errors_remain_on_stderr(self) -> None:
         with mock.patch.object(cli, "build_workflow_status", side_effect=HarnessError("blocked")):

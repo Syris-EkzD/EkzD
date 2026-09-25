@@ -1,22 +1,19 @@
 import json
-import subprocess
 from pathlib import Path
 
 from ekzd import session
 from ekzd.contract import canonical_bytes
 
 
-def project_text(*, exclude=(), protected=(), guidance=(), commands=None):
-    lines = ['schema_version = 3', 'name = "Demo"',
+def project_text(*, exclude=(), protected=(), guidance=()):
+    lines = ['schema_version = 4', 'name = "Demo"',
              f'exclude = {json.dumps(list(exclude))}', f'protected = {json.dumps(list(protected))}',
              f'guidance = {json.dumps(list(guidance))}']
-    for index, command in enumerate(commands or [['python3', '-c', 'pass']]):
-        lines += ['[[verification]]', f'name = "step-{index}"', f'command = {json.dumps(command)}']
     return '\n'.join(lines) + '\n'
 
 
 def task_text(*, branch='feat/task', include=('*',), exclude=(), sources=(), acceptance=('Works',), guidance=(), objective='Implement'):
-    lines = ['schema_version = 2', f'objective = {json.dumps(objective)}', f'branch = {json.dumps(branch)}']
+    lines = ['schema_version = 3', f'objective = {json.dumps(objective)}', f'branch = {json.dumps(branch)}']
     for name, value in [('include', include), ('exclude', exclude), ('sources', sources), ('acceptance', acceptance), ('guidance', guidance)]:
         lines.append(f'{name} = {json.dumps(list(value))}')
     return '\n'.join(lines) + '\n'

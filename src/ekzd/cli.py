@@ -22,7 +22,7 @@ from .workflow import build_workflow_status
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="ekzd", description="EkzD — strict development harness.")
+    result = argparse.ArgumentParser(prog="ekzd", description="EkzD — deterministic structural trust layer.")
     result.add_argument(
         "--version",
         action="store_true",
@@ -40,7 +40,7 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Show the active workflow state and next action.")
     handoff = sub.add_parser("handoff", help="Re-export the retained portable worker archive.")
     handoff.add_argument("--output", type=Path)
-    sub.add_parser("verify", help="Independently verify the final candidate.")
+    sub.add_parser("verify", help="Independently verify final structural authority.")
 
     sub.add_parser("abort", help="Close the active session without acceptance.")
 
@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                     "Project harness created",
                     tone="success",
                     details=[("path", str(path.relative_to(root)))],
-                    next_action="Configure durable project verification/protections once, commit policy, then write a local task.",
+                    next_action="Configure durable scope protections and guidance, commit policy, then write a local task.",
                     enabled=color,
                 ),
                 end="",

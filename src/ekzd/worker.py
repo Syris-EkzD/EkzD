@@ -20,7 +20,7 @@ def run_worker_check(root: Path, contract_path: Path, *, final: bool = False, pr
             except OSError as exc:
                 raise HarnessError(f"Frozen contract became unavailable: {exc}") from exc
             if current != payload:
-                raise HarnessError("Frozen contract changed during evaluation.")
+                raise HarnessError("Frozen contract changed during structural checking.")
 
         result = check_contract(root, contract, final=final, prepare=prepare, authority_guard=guard)
         result["contract_path"] = str(contract_path.resolve())

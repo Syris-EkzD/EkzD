@@ -178,36 +178,23 @@ def render_verification_ui(verification: dict[str, Any], *, enabled: bool) -> st
         for step in steps:
             message = str(step["name"]) + (": " + step["message"] if step.get("message") else "")
             lines.append(f"  {success(message, enabled=enabled) if step.get('passed', step.get('status') == 'PASS') else failure(message, enabled=enabled)}")
-            if step.get("status") in {"FAIL", "UNAVAILABLE"} or (
-                step.get("status") is None and step.get("passed") is False
-            ):
-                details = step.get("details")
-                if isinstance(details, dict):
-                    for stream in ("stderr", "stdout"):
-                        output = details.get(stream)
-                        if not isinstance(output, str) or not output.strip():
-                            continue
-                        truncated = details.get(f"{stream}_truncated") is True
-                        label = f"{stream} (truncated)" if truncated else stream
-                        lines.append(f"    {label}:")
-                        lines.extend(f"      {line}" for line in output.rstrip("\r\n").splitlines())
 
     passed = bool(verification.get("passed"))
     lines.extend(
         [
             "",
             _section("Result", enabled=enabled),
-            f"  {success('Verification passed', enabled=enabled) if passed else failure('Verification failed', enabled=enabled)}",
+            f"  {success('Structural verification passed', enabled=enabled) if passed else failure('Structural verification failed', enabled=enabled)}",
         ]
     )
     if passed:
         lines.append(f"  {muted('Bound to the current Git-visible state.', enabled=enabled)}")
         lines.extend(
             _next_lines(
-                "Review the verified changes, then run `ekzd finish --accept` if you approve them.",
+                "Review the exact structurally verified candidate, confirm external CI, then run `ekzd finish --accept` if you approve it.",
                 enabled=enabled,
             )
         )
     else:
-        lines.extend(_next_lines("Fix the reported failure and rerun `ekzd verify`.", enabled=enabled))
+        lines.extend(_next_lines("Fix the reported structural failure and rerun `ekzd verify`.", enabled=enabled))
     return "\n".join(lines) + "\n"

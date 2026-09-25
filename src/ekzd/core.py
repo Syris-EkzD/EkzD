@@ -191,19 +191,19 @@ def session_commit_count(root: Path, start_head: str) -> int:
         raise HarnessError("Unable to count commits in the active session.") from exc
 
 
-def load_config(root: Path, *, ready: bool = True) -> dict:
+def load_config(root: Path) -> dict:
     from .contract import parse_project, read_toml
-    return parse_project(read_toml(root / CONFIG_RELATIVE), ready=ready)
+    return parse_project(read_toml(root / CONFIG_RELATIVE))
 
 
-def load_committed_config(root: Path, *, ready: bool = True) -> dict:
+def load_committed_config(root: Path) -> dict:
     from .contract import parse_project
     ensure_project_config_committed_clean(root)
     try:
         data = tomllib.loads(committed_config_bytes(root).decode("utf-8"))
     except (UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise HarnessError(f"Unable to read committed {CONFIG_RELATIVE}: {exc}") from exc
-    return parse_project(data, ready=ready)
+    return parse_project(data)
 
 
 def init_project(root: Path, name: str | None = None) -> Path:
@@ -221,14 +221,7 @@ def init_project(root: Path, name: str | None = None) -> Path:
         raise HarnessError("Project name cannot be empty.")
     path.write_text(
         f'schema_version = {PROJECT_VERSION}\nname = {json.dumps(project_name)}\n'
-        'protected = []\nexclude = []\nguidance = []\n'
-        '# Add at least one required verification step before starting a task.\n'
-        '#\n'
-        '# [[verification]]\n'
-        '# name = "tests"\n'
-        '# command = ["..."]\n'
-        '# cwd = "."\n'
-        '# timeout_seconds = 600\n', encoding="utf-8")
+        'protected = []\nexclude = []\nguidance = []\n', encoding="utf-8")
     gitignore = root / ".gitignore"
     if gitignore.is_symlink():
         raise HarnessError(".gitignore must not be a symlink.")

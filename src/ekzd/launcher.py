@@ -27,7 +27,7 @@ def bootstrap():
     def guard():
         _, current = validate_payload(root)
         if current != raw:
-            raise ValueError('Handoff manifest changed during evaluation.')
+            raise ValueError('Handoff manifest changed during structural checking.')
     return main(root, manifest, guard)
 
 
