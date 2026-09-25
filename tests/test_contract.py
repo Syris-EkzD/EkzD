@@ -6,11 +6,11 @@ from ekzd.core import HarnessError
 
 
 def project(**overrides):
-    return dict(schema_version=2, name="Example", verification=[dict(name="test", command=["python3", "-c", "pass"])], **overrides)
+    return dict(schema_version=3, name="Example", verification=[dict(name="test", command=["python3", "-c", "pass"])], **overrides)
 
 
 def task(**overrides):
-    return dict(schema_version=1, objective="Implement", branch="feat/task", include=["src/**"], acceptance=["Works"], **overrides)
+    return dict(schema_version=2, objective="Implement", branch="feat/task", include=["src/**"], acceptance=["Works"], **overrides)
 
 
 class ContractTests(unittest.TestCase):
@@ -27,35 +27,36 @@ class ContractTests(unittest.TestCase):
 
     def test_determinism_normalizes_defaults_and_scope_order(self):
         a = self.compose(project(exclude=["b", "a", "b"]))
-        b = self.compose(project(exclude=["a", "b"], max_commits=50))
+        b = self.compose(project(exclude=["a", "b"]))
         self.assertEqual(canonical_bytes(a), canonical_bytes(b))
         self.assertEqual(contract_id(a), contract_id(b))
         self.assertTrue(canonical_bytes(a).endswith(b"}\n"))
         b["objective"] = "Different"
         self.assertNotEqual(contract_id(a), contract_id(b))
 
-    def test_commit_limit_defaults_to_safety_ceiling_and_preserves_lower_limits(self):
+    def test_commit_safety_ceiling_is_fixed_and_not_author_configurable(self):
         self.assertEqual(50, self.compose()["max_commits"])
-        self.assertEqual(42, self.compose(project(max_commits=42))["max_commits"])
-        self.assertEqual(8, self.compose(project(max_commits=42), task(max_commits=8))["max_commits"])
-        self.assertEqual(50, self.compose(project(max_commits=80))["max_commits"])
-        self.assertEqual(50, self.compose(project(max_commits=42), task(max_commits=80))["max_commits"])
-        self.assertEqual(50, parse_project(project(max_commits=80))["max_commits"])
-        self.assertEqual(50, parse_task(task(max_commits=80))["max_commits"])
-        for value in (0, -1, True, 1.5):
-            with self.assertRaises(HarnessError):
-                parse_task(task(max_commits=value))
-
-        contract = self.compose()
-        contract["max_commits"] = 51
-        with self.assertRaisesRegex(HarnessError, "50-commit safety ceiling"):
-            validate_contract(contract)
+        for parser, authored in (
+                (parse_project, project(max_commits=5)),
+                (parse_task, task(max_commits=8))):
+            with self.subTest(parser=parser.__name__), self.assertRaisesRegex(HarnessError, "max_commits"):
+                parser(authored)
+        for value in (49, 51):
+            contract = self.compose()
+            contract["max_commits"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    HarnessError, "fixed 50-commit safety ceiling"):
+                validate_contract(contract)
 
     def test_closed_schemas_and_versions(self):
         for parser, data, key in ((parse_project, project(), "excludes"), (parse_task, task(), "protected"),
                                   (parse_task, task(), "ekzd"), (validate_contract, self.compose(), "repository")):
             data[key] = []
             with self.assertRaisesRegex(HarnessError, key):
+                parser(data)
+        for parser, data in ((parse_project, project()), (parse_task, task())):
+            data["schema_version"] -= 1
+            with self.assertRaisesRegex(HarnessError, "Unsupported"):
                 parser(data)
         for value in (0, 1, 3, True, 2.0):
             c = self.compose()

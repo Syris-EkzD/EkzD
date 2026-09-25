@@ -28,7 +28,7 @@ def build_workflow_status(root: Path) -> dict:
         count = session_commit_count(root, contract["baseline"])
         result.update(current_branch=candidate.branch, head=candidate.head, worktree_clean=candidate.clean, commit_count=count)
         if count > contract["max_commits"]:
-            raise HarnessError("Commit budget exceeded.")
+            raise HarnessError("Commit safety ceiling exceeded.")
         verification = state["verification"]
         if verification:
             if verification.get("passed") is not True or verification.get("status") != "PASS":

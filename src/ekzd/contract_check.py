@@ -61,7 +61,7 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
             raise HarnessError("Preparation requires a clean candidate at the exact frozen baseline.")
         count = session_commit_count(root, contract["baseline"])
         if count > contract["max_commits"]:
-            raise HarnessError(f"Commit budget exceeded: {count} > {contract['max_commits']}.")
+            raise HarnessError(f"Commit safety ceiling exceeded: {count} > {contract['max_commits']}.")
         validate_baseline_sources(root, contract)
         # Include every intermediate commit (including merges/reverted changes),
         # not just a baseline-to-HEAD diff. Current raw paths come from Candidate.
@@ -78,7 +78,7 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
             violations.append(".ekzd/local/ must remain untracked")
         if violations:
             raise HarnessError("Scope/protected-path violations: " + "; ".join(violations))
-        add("contract-authority", "PASS", "Baseline, branch, budget and scope satisfy frozen authority.",
+        add("contract-authority", "PASS", "Baseline, branch, commit ceiling and scope satisfy frozen authority.",
             commit_count=count, max_commits=contract["max_commits"], changed_paths=paths)
     except (HarnessError, OSError) as exc:
         add("contract-authority", "FAIL", str(exc))

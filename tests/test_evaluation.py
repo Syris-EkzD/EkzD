@@ -43,7 +43,7 @@ class EvaluationPhase2Tests(unittest.TestCase):
         return "[" + ", ".join(json.dumps(value) for value in values) + "]"
 
     def write_config(self, steps: list[tuple[str, list[str], str, int]]) -> None:
-        lines = ['schema_version = 2', 'name = "Demo"']
+        lines = ['schema_version = 3', 'name = "Demo"']
         for name, command, cwd, timeout in steps:
             lines += [
                 "",

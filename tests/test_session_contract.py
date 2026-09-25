@@ -122,7 +122,7 @@ class SessionContractTests(unittest.TestCase):
     def test_contract_tampering_is_detected_before_use(self):
         self.start()
         state = session.read_state(self.root)
-        state['contract']['max_commits'] = 49
+        state['contract']['objective'] = 'tampered'
         session.write_state(self.root, state)
         with self.assertRaisesRegex(core.HarnessError, 'ID mismatch'):
             session.verify_session(self.root)

@@ -31,12 +31,11 @@ ekzd init
 The generated `.ekzd/project.toml` is intentionally not ready to start a task until at least one required verification step is configured:
 
 ```toml
-schema_version = 2
+schema_version = 3
 name = "Example"
 protected = []
 exclude = []
 guidance = []
-max_commits = 50
 # Add at least one required verification step before starting a task.
 #
 # [[verification]]
@@ -74,10 +73,9 @@ git commit -m "chore: configure EkzD policy"
 
 Project fields are:
 
-- `schema_version = 2`
+- `schema_version = 3`
 - non-empty `name`
 - optional `protected`, `exclude`, and `guidance` arrays
-- positive `max_commits` (default and safety ceiling 50)
 - optional `[[readiness]]` probes
 - at least one required `[[verification]]` step before a task can start
 
@@ -88,7 +86,7 @@ Verification/readiness steps use direct argv arrays without a shell. `cwd` defau
 Keep task drafts under the ignored local directory, for example `.ekzd/local/task.toml`:
 
 ```toml
-schema_version = 1
+schema_version = 2
 objective = "Add registration validation"
 branch = "feat/registration-validation"
 include = ["src/registration/", "tests/registration/"]
@@ -99,7 +97,6 @@ acceptance = [
   "Existing valid usernames still pass.",
 ]
 guidance = ["Keep this implementation dependency-free."]
-max_commits = 8
 
 # Optional additive task-specific checks.
 [[verification]]
@@ -109,7 +106,7 @@ command = ["python3", "-m", "unittest", "tests.registration.test_validation"]
 
 Required task fields are `schema_version`, `objective`, `branch`, non-empty `include`, and non-empty `acceptance`.
 
-Task exclusions extend project exclusions. Project protections cannot be removed by a task. Guidance, readiness, and verification are additive. A task-specific commit limit overrides the project default, while values above 50 resolve to the 50-commit safety ceiling. Lower explicit limits remain effective. Declared source files must exist as regular files at the frozen baseline.
+Task exclusions extend project exclusions. Project protections cannot be removed by a task. Guidance, readiness, and verification are additive. The frozen contract always uses EkzD's fixed 50-commit safety ceiling; project and task files cannot configure it. Declared source files must exist as regular files at the frozen baseline.
 
 ## 3. Start and transfer the handoff
 
@@ -190,7 +187,7 @@ Then edit task/policy inputs as needed and start again. Abort does not rewrite G
 
 ## Status and commands
 
-`ekzd status` is an advisory workflow compass. For an active task it shows the objective, implementation branch, frozen baseline, handoff path, candidate state, commit budget, verification state, and the practical next action.
+`ekzd status` is an advisory workflow compass. For an active task it shows the objective, implementation branch, frozen baseline, handoff path, candidate state, fixed commit ceiling, verification state, and the practical next action.
 
 Supported commands:
 

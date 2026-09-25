@@ -192,7 +192,7 @@ class CliPresentationTests(unittest.TestCase):
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
-            "max_commits": 3,
+            "max_commits": 50,
             "verification": "not run",
             "blocked_reason": None,
             "next": "Transfer the existing handoff archive.",

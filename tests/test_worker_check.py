@@ -47,16 +47,16 @@ class WorkerCheckTests(unittest.TestCase):
         return "[" + ", ".join(json.dumps(value) for value in values) + "]"
 
     def _write_project_steps(self, steps, *, step_cwds=None):
-        lines = ['schema_version = 2', 'name = "Demo"']
+        lines = ['schema_version = 3', 'name = "Demo"']
         for name, command in steps:
             lines += ['[[verification]]', f'name = {json.dumps(name)}',
                       f'command = {json.dumps(command)}', f'cwd = {json.dumps((step_cwds or {}).get(name, "."))}',
                       'timeout_seconds = 30']
         (self.root / '.ekzd/project.toml').write_text('\n'.join(lines) + '\n')
 
-    def _write_task(self, *, baseline=None, branch='feat/task', include=None, exclude=None, max_commits=50, task_steps=None, task_step_cwds=None):
-        task = dict(schema_version=1, objective='Worker task', branch=branch,
-                    include=include or ['allowed.txt'], exclude=exclude or [], acceptance=['ready'], max_commits=max_commits,
+    def _write_task(self, *, baseline=None, branch='feat/task', include=None, exclude=None, task_steps=None, task_step_cwds=None):
+        task = dict(schema_version=2, objective='Worker task', branch=branch,
+                    include=include or ['allowed.txt'], exclude=exclude or [], acceptance=['ready'],
                     verification=[dict(name=name, command=command, cwd=(task_step_cwds or {}).get(name, '.'), timeout_seconds=30)
                                   for name, command in task_steps or []])
         contract = compose_contract(load_config(self.root), task, baseline or self.baseline, runtime_identity())
@@ -113,15 +113,14 @@ class WorkerCheckTests(unittest.TestCase):
         self.assertEqual("FAIL", checks["contract-authority"]["status"])
 
     def test_commit_ceiling_uses_baseline_relative_commit_count(self) -> None:
-        for index in range(2):
+        for index in range(51):
             (self.root / "allowed.txt").write_text(f"commit-{index}\n", encoding="utf-8")
             self._git("add", "allowed.txt")
             self._git("commit", "-q", "-m", f"change {index}")
-        self._write_task(max_commits=1)
         result = run_worker_check(self.root, self.task_path)
         check = self._checks(result)["contract-authority"]
         self.assertEqual("FAIL", check["status"])
-        self.assertIn("2 > 1", check["message"])
+        self.assertIn("Commit safety ceiling exceeded: 51 > 50", check["message"])
 
     def test_scope_covers_committed_staged_unstaged_and_untracked_changes(self) -> None:
         (self.root / "committed.txt").write_text("c\n", encoding="utf-8")

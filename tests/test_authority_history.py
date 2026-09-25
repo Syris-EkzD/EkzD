@@ -124,14 +124,14 @@ class AuthorityHistoryTests(unittest.TestCase):
         self.assertEqual('', self.git('diff', '--name-only', '--', 'secret'))
         self.both_reject('Git content filters are unsupported')
 
-    def test_configured_lower_commit_ceiling_counts_history(self):
-        self.start(max_commits=21)
-        for i in range(21):
+    def test_fixed_commit_ceiling_allows_fifty_and_rejects_fifty_one(self):
+        self.start()
+        for i in range(50):
             self.git('commit', '--allow-empty', '-qm', f'candidate {i}')
         self.assertTrue(run_worker_check(self.root, self.path, final=True)['ready'])
         self.assertTrue(session.verify_session(self.root)['passed'])
         self.git('commit', '--allow-empty', '-qm', 'one too many')
-        self.both_reject('Commit budget exceeded: 22 > 21')
+        self.both_reject('Commit safety ceiling exceeded: 51 > 50')
         session.abort_session(self.root)
         self.assertEqual('aborted', session.read_state(self.root)['status'])
 

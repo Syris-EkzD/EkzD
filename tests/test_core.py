@@ -38,8 +38,8 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertNotIn('verification = []', template)
         self.assertIn('# [[verification]]', template)
         self.assertIn('# command = ["..."]', template)
-        self.assertIn('max_commits = 50', template)
-        self.assertEqual(50, core.load_config(self.root, ready=False)['max_commits'])
+        self.assertNotIn('max_commits', template)
+        self.assertNotIn('max_commits', core.load_config(self.root, ready=False))
         with self.assertRaisesRegex(core.HarnessError, r'add at least one \[\[verification\]\] step'):
             core.load_config(self.root)
 

@@ -208,7 +208,7 @@ def load_committed_config(root: Path, *, ready: bool = True) -> dict:
 
 def init_project(root: Path, name: str | None = None) -> Path:
     import json
-    from .contract import DEFAULT_MAX_COMMITS, PROJECT_VERSION
+    from .contract import PROJECT_VERSION
 
     path = root / CONFIG_RELATIVE
     if path.exists() or path.is_symlink():
@@ -222,7 +222,6 @@ def init_project(root: Path, name: str | None = None) -> Path:
     path.write_text(
         f'schema_version = {PROJECT_VERSION}\nname = {json.dumps(project_name)}\n'
         'protected = []\nexclude = []\nguidance = []\n'
-        f'max_commits = {DEFAULT_MAX_COMMITS}\n'
         '# Add at least one required verification step before starting a task.\n'
         '#\n'
         '# [[verification]]\n'
