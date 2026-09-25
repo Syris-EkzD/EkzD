@@ -29,20 +29,12 @@ class HandoffTests(unittest.TestCase):
             sources=['README.md'],
             acceptance=['Feature works.', 'Regression is covered.'],
             guidance=['Keep the task rule.'],
-            readiness=[dict(name='git', command=['git', '--version'])],
-            verification=[dict(name='focused', command=['python3', '-m', 'unittest', 'tests.test_feature'], cwd='.', timeout_seconds=45)],
         )
         contract = compose_contract(
             project(
                 protected=['secrets/'],
                 exclude=['generated/**'],
                 guidance=['Keep the project rule.'],
-                readiness=[dict(
-                    name='python',
-                    command=['python3', '--version'],
-                    cwd='tools',
-                    timeout_seconds=30,
-                )],
             ),
             task_data,
             'a' * 40,
@@ -60,14 +52,14 @@ class HandoffTests(unittest.TestCase):
                 'Regression is covered.', '## Declared source/reference files',
                 'README.md', '## Project/task guidance', 'Keep the project rule.',
                 'Keep the task rule.', f"Effective commit ceiling: {contract['max_commits']} commits",
-                '## Readiness checks', 'python3', '--version', 'tools', '30 seconds',
-                'git', '## Verification checks', 'focused', 'tests.test_feature',
-                '45 seconds', 'run.py prepare', 'run.py check', 'run.py check --final',
-                'meaningful implementation milestones', 'does not judge commit meaning',
+                '## Verification boundary', 'structural verification only', 'belong to CI',
+                'run.py prepare', 'run.py check', 'run.py check --final',
+                'meaningful implementation milestones', 'Conventional Commit',
+                'does not judge commit meaning', 'required CI checks', 'exact published candidate',
                 'Do not widen the frozen task authority', 'Do not install missing capabilities',
                 'requirements are ambiguous', 'unauthorized scope', 'Do not merge',
-                'Exact branch', 'Exact commit', 'Contract ID', 'Verification result',
-                'Changed files', 'Unresolved issues and review notes'):
+                'Exact branch', 'Exact commit', 'Contract ID', 'EkzD final structural check result',
+                'Required CI status/checks', 'Changed files', 'Unresolved issues and review notes'):
             self.assertIn(expected, rendered)
 
     def test_instructions_shell_quote_git_valid_branch_as_one_literal_argument(self):

@@ -35,13 +35,11 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertEqual('Demo', core.load_config(self.root, ready=False)['name'])
         template = self.policy.read_text()
         self.assertNotIn('include', template)
-        self.assertNotIn('verification = []', template)
-        self.assertIn('# [[verification]]', template)
-        self.assertIn('# command = ["..."]', template)
+        self.assertNotIn('verification', template)
+        self.assertNotIn('readiness', template)
         self.assertNotIn('max_commits', template)
-        self.assertNotIn('max_commits', core.load_config(self.root, ready=False))
-        with self.assertRaisesRegex(core.HarnessError, r'add at least one \[\[verification\]\] step'):
-            core.load_config(self.root)
+        self.assertNotIn('max_commits', core.load_config(self.root))
+        self.assertEqual('Demo', core.load_config(self.root)['name'])
 
     def test_start_requires_clean_committed_policy(self):
         with self.assertRaises(core.HarnessError):
@@ -51,11 +49,7 @@ class ProjectSetupTests(unittest.TestCase):
         with self.assertRaisesRegex(core.HarnessError, 'clean'):
             freeze(self.root)
 
-    def test_required_project_verification_and_task_acceptance(self):
-        self.git('add', '.')
-        self.git('commit', '-qm', 'empty policy')
-        with self.assertRaisesRegex(core.HarnessError, 'verification'):
-            freeze(self.root)
+    def test_task_acceptance_remains_required(self):
         self.ready()
         with self.assertRaisesRegex(core.HarnessError, 'acceptance'):
             freeze(self.root, acceptance=[])

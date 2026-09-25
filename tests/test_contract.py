@@ -1,4 +1,3 @@
-import copy
 import unittest
 
 from ekzd.contract import canonical_bytes, compose_contract, contract_id, parse_project, parse_task, validate_contract
@@ -6,24 +5,29 @@ from ekzd.core import HarnessError
 
 
 def project(**overrides):
-    return dict(schema_version=3, name="Example", verification=[dict(name="test", command=["python3", "-c", "pass"])], **overrides)
+    return dict(schema_version=4, name="Example", **overrides)
 
 
 def task(**overrides):
-    return dict(schema_version=2, objective="Implement", branch="feat/task", include=["src/**"], acceptance=["Works"], **overrides)
+    return dict(schema_version=3, objective="Implement", branch="feat/task",
+                include=["src/**"], acceptance=["Works"], **overrides)
 
 
 class ContractTests(unittest.TestCase):
     def compose(self, p=None, t=None):
-        return compose_contract(p or project(), t or task(), "a" * 40, dict(version="0.3.0", build_sha256="b" * 64))
+        return compose_contract(p or project(), t or task(), "a" * 40,
+                                dict(version="0.3.0", build_sha256="b" * 64))
 
     def test_composition_is_additive_and_cannot_weaken_project(self):
-        c = self.compose(project(protected=["secret/"], exclude=["private/**"], guidance=["permanent"]),
-                         task(exclude=["generated/**"], guidance=["task"], verification=[dict(name="extra", command=["true"])]))
+        c = self.compose(
+            project(protected=["secret/"], exclude=["private/**"], guidance=["permanent"]),
+            task(exclude=["generated/**"], guidance=["task"]),
+        )
         self.assertIn("secret/", c["scope"]["protected"])
         self.assertEqual(["generated/**", "private/**"], c["scope"]["exclude"])
-        self.assertEqual(["test", "extra"], [s["name"] for s in c["verification"]])
         self.assertEqual(["permanent", "task"], c["guidance"])
+        self.assertNotIn("verification", c)
+        self.assertNotIn("readiness", c)
 
     def test_determinism_normalizes_defaults_and_scope_order(self):
         a = self.compose(project(exclude=["b", "a", "b"]))
@@ -48,9 +52,23 @@ class ContractTests(unittest.TestCase):
                     HarnessError, "fixed 50-commit safety ceiling"):
                 validate_contract(contract)
 
+    def test_dependency_bound_check_fields_are_not_authoring_surface(self):
+        for parser, authored, key in (
+            (parse_project, project(verification=[]), "verification"),
+            (parse_project, project(readiness=[]), "readiness"),
+            (parse_task, task(verification=[]), "verification"),
+            (parse_task, task(readiness=[]), "readiness"),
+        ):
+            with self.subTest(key=key), self.assertRaisesRegex(HarnessError, key):
+                parser(authored)
+
     def test_closed_schemas_and_versions(self):
-        for parser, data, key in ((parse_project, project(), "excludes"), (parse_task, task(), "protected"),
-                                  (parse_task, task(), "ekzd"), (validate_contract, self.compose(), "repository")):
+        for parser, data, key in (
+            (parse_project, project(), "excludes"),
+            (parse_task, task(), "protected"),
+            (parse_task, task(), "ekzd"),
+            (validate_contract, self.compose(), "repository"),
+        ):
             data[key] = []
             with self.assertRaisesRegex(HarnessError, key):
                 parser(data)
@@ -58,55 +76,49 @@ class ContractTests(unittest.TestCase):
             data["schema_version"] -= 1
             with self.assertRaisesRegex(HarnessError, "Unsupported"):
                 parser(data)
-        for value in (0, 1, 3, True, 2.0):
+        for value in (0, 1, 2, 4, True, 3.0):
             c = self.compose()
             c["contract_version"] = value
             with self.assertRaisesRegex(HarnessError, "Unsupported"):
                 validate_contract(c)
 
-    def test_verification_typos_and_invalid_paths_fail(self):
-        p = project()
-        p["verification"][0]["timeouts"] = 1
-        with self.assertRaisesRegex(HarnessError, "timeouts"):
-            parse_project(p)
+    def test_invalid_paths_and_protection_fail(self):
         with self.assertRaises(HarnessError):
             parse_task(task(sources=["../secret"]))
-
-    def test_contract_requires_resolved_steps_and_protection(self):
-        c = self.compose()
-        del c["verification"][0]["cwd"]
-        with self.assertRaises(HarnessError):
-            validate_contract(c)
         c = self.compose()
         c["scope"]["protected"] = []
         with self.assertRaises(HarnessError):
             validate_contract(c)
 
-    def test_canonical_json_rejects_formatting_duplicate_keys_and_legacy_inputs(self):
+    def test_canonical_json_rejects_noncanonical_and_legacy_inputs(self):
         import json
         import tempfile
         from pathlib import Path
         from ekzd.contract import load_contract
         c = self.compose()
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'contract.json'
-            for raw in (json.dumps(c).encode(), canonical_bytes(c).rstrip(b'\n'),
-                        b'{"contract_version":1,' + canonical_bytes(c)[1:], b'schema_version = 2\n'):
+            path = Path(directory) / "contract.json"
+            for raw in (
+                json.dumps(c).encode(),
+                canonical_bytes(c).rstrip(b"\n"),
+                b'{"contract_version":2,' + canonical_bytes(c)[1:],
+                b"schema_version = 3\n",
+            ):
                 path.write_bytes(raw)
                 with self.assertRaises(HarnessError):
                     load_contract(path)
-            c['objective'] = 'Validación — 注册'
+            c["objective"] = "Validación — 注册"
             path.write_bytes(canonical_bytes(c))
             self.assertEqual(c, load_contract(path))
-            self.assertIn('注册'.encode(), path.read_bytes())
+            self.assertIn("注册".encode(), path.read_bytes())
 
-    def test_unknown_fields_in_each_nested_contract_object(self):
-        for key in ('project', 'scope', 'ekzd'):
+    def test_unknown_fields_in_nested_contract_objects(self):
+        for key in ("project", "scope", "ekzd"):
             c = self.compose()
-            c[key]['typo'] = []
-            with self.assertRaisesRegex(HarnessError, 'typo'):
+            c[key]["typo"] = []
+            with self.assertRaisesRegex(HarnessError, "typo"):
                 validate_contract(c)
-        c = self.compose()
-        c['verification'][0]['timeout'] = 5
-        with self.assertRaisesRegex(HarnessError, 'timeout'):
-            validate_contract(c)
+
+
+if __name__ == "__main__":
+    unittest.main()
