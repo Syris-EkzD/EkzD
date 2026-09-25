@@ -1,3 +1,4 @@
+import copy
 import io
 import tempfile
 import unittest
@@ -18,6 +19,55 @@ class HandoffTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.contract = compose_contract(project(), task(), 'a'*40, runtime_identity())
+
+    def test_instructions_render_complete_worker_authority_deterministically(self):
+        task_data = task()
+        task_data.update(
+            include=['src/**', 'tests/**'],
+            exclude=['vendor/**'],
+            sources=['README.md'],
+            acceptance=['Feature works.', 'Regression is covered.'],
+            guidance=['Keep the task rule.'],
+            readiness=[dict(name='git', command=['git', '--version'])],
+            verification=[dict(name='focused', command=['python3', '-m', 'unittest', 'tests.test_feature'], cwd='.', timeout_seconds=45)],
+        )
+        contract = compose_contract(
+            project(
+                protected=['secrets/'],
+                exclude=['generated/**'],
+                guidance=['Keep the project rule.'],
+                readiness=[dict(
+                    name='python',
+                    command=['python3', '--version'],
+                    cwd='tools',
+                    timeout_seconds=30,
+                )],
+            ),
+            task_data,
+            'a' * 40,
+            runtime_identity(),
+        )
+
+        rendered = handoff.instructions(contract).decode('utf-8')
+        self.assertEqual(rendered, handoff.instructions(copy.deepcopy(contract)).decode('utf-8'))
+        for expected in (
+                '# EkzD worker task', 'contract.json', contract['objective'],
+                contract['baseline'], contract['branch'], '## Allowed scope',
+                'src/**', 'tests/**', '## Excluded paths', 'generated/**',
+                'vendor/**', '## Protected paths', 'secrets/',
+                '.ekzd/project.toml', '## Acceptance criteria', 'Feature works.',
+                'Regression is covered.', '## Declared source/reference files',
+                'README.md', '## Project/task guidance', 'Keep the project rule.',
+                'Keep the task rule.', f"Effective commit ceiling: {contract['max_commits']} commits",
+                '## Readiness checks', 'python3', '--version', 'tools', '30 seconds',
+                'git', '## Verification checks', 'focused', 'tests.test_feature',
+                '45 seconds', 'run.py prepare', 'run.py check', 'run.py check --final',
+                'meaningful implementation milestones', 'does not judge commit meaning',
+                'Do not widen the frozen task authority', 'Do not install missing capabilities',
+                'requirements are ambiguous', 'unauthorized scope', 'Do not merge',
+                'Exact branch', 'Exact commit', 'Contract ID', 'Verification result',
+                'Changed files', 'Unresolved issues and review notes'):
+            self.assertIn(expected, rendered)
 
     def test_archive_is_deterministic_and_has_only_controlled_members(self):
         files = handoff.build_payload(self.contract)
