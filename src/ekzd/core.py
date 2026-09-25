@@ -221,7 +221,7 @@ def init_project(root: Path, name: str | None = None) -> Path:
         raise HarnessError("Project name cannot be empty.")
     path.write_text(
         f'schema_version = {PROJECT_VERSION}\nname = {json.dumps(project_name)}\n'
-        'protected = []\nexclude = []\nguidance = []\nmax_commits = 20\n'
+        'protected = []\nexclude = []\nguidance = []\n'
         '# Add at least one required verification step before starting a task.\n'
         '#\n'
         '# [[verification]]\n'

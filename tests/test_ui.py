@@ -85,7 +85,7 @@ class UiTests(unittest.TestCase):
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
-            "max_commits": 3,
+            "max_commits": 50,
             "verification": "stale",
             "blocked_reason": None,
             "next": "Rerun `ekzd verify`.",
@@ -101,7 +101,7 @@ class UiTests(unittest.TestCase):
         self.assertIn("Repository", rendered)
         self.assertIn("handoff  /repo/.ekzd/local/handoffs/demo/handoff.zip", rendered)
         self.assertNotIn("baseline  main", rendered)
-        self.assertIn("commits  0 / 3", rendered)
+        self.assertIn("commits  0 / 50", rendered)
         self.assertIn("Next", rendered)
         self.assertIn("› Rerun `ekzd verify`.", rendered)
 
@@ -132,7 +132,7 @@ class UiTests(unittest.TestCase):
             "head": "1234567890abcdef",
             "worktree_clean": True,
             "commit_count": 0,
-            "max_commits": 3,
+            "max_commits": 50,
             "verification": "not run",
             "blocked_reason": None,
             "next": "Transfer the existing handoff archive.",
@@ -192,17 +192,17 @@ class UiTests(unittest.TestCase):
             "handoff_path": "/repo/.ekzd/local/handoffs/demo/handoff.zip",
             "head": "fedcba0987654321",
             "worktree_clean": True,
-            "commit_count": 4,
-            "max_commits": 3,
+            "commit_count": 51,
+            "max_commits": 50,
             "verification": "blocked",
-            "blocked_reason": "Session commit budget exceeded.",
+            "blocked_reason": "Commit safety ceiling exceeded.",
             "next": "Abort this session.",
         }
         rendered = render_status_ui(status, enabled=False)
         self.assertIn("✗ Session blocked", rendered)
         self.assertIn("verification  blocked", rendered)
         self.assertIn("Blocked", rendered)
-        self.assertIn("✗ Session commit budget exceeded.", rendered)
+        self.assertIn("✗ Commit safety ceiling exceeded.", rendered)
         self.assertIn("› Abort this session.", rendered)
 
     def test_verification_output_shows_steps_and_final_result(self) -> None:

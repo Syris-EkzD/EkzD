@@ -1,7 +1,9 @@
 """Deterministic handoff construction and retained-payload re-export."""
 import hashlib
 import io
+import json
 import os
+import shlex
 import shutil
 import tempfile
 import zipfile
@@ -14,31 +16,117 @@ from .runtime import capture_runtime
 from .identity import BuildIdentityUnavailable
 
 
+def _instruction_list(items: list[str]) -> str:
+    if not items:
+        return "- None declared."
+    return "\n".join(f"- {json.dumps(item, ensure_ascii=False)}" for item in items)
+
+
+def _instruction_steps(steps: list[dict]) -> str:
+    if not steps:
+        return "- None declared."
+    rendered = []
+    for index, step in enumerate(steps, 1):
+        rendered.extend([
+            f"{index}. Name: {json.dumps(step['name'], ensure_ascii=False)}",
+            f"   - Command argv: {json.dumps(step['command'], ensure_ascii=False)}",
+            f"   - Working directory: {json.dumps(step['cwd'], ensure_ascii=False)}",
+            f"   - Timeout: {step['timeout_seconds']} seconds",
+        ])
+    return "\n".join(rendered)
+
+
 def instructions(contract: dict) -> bytes:
+    sources = ""
+    if contract['sources']:
+        sources = f'''\n## Declared source/reference files
+
+{_instruction_list(contract['sources'])}
+'''
+    guidance = ""
+    if contract['guidance']:
+        guidance = f'''\n## Project/task guidance
+
+{_instruction_list(contract['guidance'])}
+'''
     text = f'''# EkzD worker task
 
-Contract ID: {contract_id(contract)}
-Objective: {contract['objective']}
-Baseline: {contract['baseline']}
-Implementation branch: {contract['branch']}
-Allowed scope: {', '.join(contract['scope']['include'])}
-Excluded/protected: {', '.join(contract['scope']['exclude'] + contract['scope']['protected'])}
+`contract.json` is the canonical machine-readable authority. This document is its deterministic
+worker-facing rendering.
+
+## Task identity
+
+- Contract ID: `{contract_id(contract)}`
+- Objective: {json.dumps(contract['objective'], ensure_ascii=False)}
+- Exact baseline: `{contract['baseline']}`
+- Implementation branch: {json.dumps(contract['branch'], ensure_ascii=False)}
+- Effective commit ceiling: {contract['max_commits']} commits
+
+## Allowed scope
+
+{_instruction_list(contract['scope']['include'])}
+
+## Excluded paths
+
+{_instruction_list(contract['scope']['exclude'])}
+
+## Protected paths
+
+{_instruction_list(contract['scope']['protected'])}
+
+## Acceptance criteria
+
+{_instruction_list(contract['acceptance'])}
+{sources}{guidance}
+## Readiness checks
+
+{_instruction_steps(contract['readiness'])}
+
+## Verification checks
+
+{_instruction_steps(contract['verification'])}
+
+## Worker flow
 
 Obtain the target repository checkout separately; this archive contains no repository or tools.
-Externally create/check out the declared branch at the exact baseline. Extract this handoff outside
-tracked candidate files. From the target checkout, run:
+Extract this handoff outside tracked candidate files. Create the declared implementation branch at
+the exact baseline, then run:
 
+    git switch -c {shlex.quote(contract['branch'])} {contract['baseline']}
     python3 /path/to/handoff/run.py prepare
     python3 /path/to/handoff/run.py check
-    # Implement, repeatedly check, fix and self-review; commit the candidate.
+
+Implement, run iterative `check` commands, fix failures, and self-review. Commit at small,
+meaningful implementation milestones. Keep each commit logically focused; avoid batching unrelated
+or excessive work into one large commit and avoid noisy WIP, checkpoint, or fixup commits. Use as
+many coherent commits as the task reasonably requires, up to the effective commit ceiling. EkzD
+mechanically enforces commit-count and history rules; it does not judge commit meaning.
+
+When the candidate is complete, clean, and committed, run:
+
     python3 /path/to/handoff/run.py check --final
 
-Read contract.json for complete authority and consult sources at the baseline. Preparation probes
-capabilities only; correctness verification may depend on files the task will create. Missing
-capabilities block work: report the exact blocker, do not install tools through EkzD or widen authority.
-Use logical commits within the frozen budget. Do not merge. Return the exact branch/commit,
-contract ID, check results, changed files and remaining review notes. The maintainer independently
-verifies and explicitly accepts; worker success is not acceptance.
+Preparation probes capabilities only; correctness verification may depend on files the task will
+create. Every check repeats readiness before verification.
+
+## Escalation rules
+
+- Do not widen the frozen task authority.
+- Do not install missing capabilities through EkzD. Stop and report the exact blocker.
+- Stop and report when requirements are ambiguous or the task requires unauthorized scope.
+- Do not merge. The maintainer independently verifies and retains final merge authority.
+
+## Required worker return
+
+- Exact branch.
+- Exact commit.
+- Contract ID.
+- Verification result, including the final check result.
+- Changed files.
+- Unresolved issues and review notes.
+
+Worker success is not acceptance; the maintainer independently verifies and explicitly accepts the
+candidate.
 '''
     return text.encode('utf-8')
 

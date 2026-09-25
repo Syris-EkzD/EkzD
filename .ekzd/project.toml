@@ -1,12 +1,12 @@
-schema_version = 2
+schema_version = 3
 name = "EkzD"
 protected = [".github/"]
 exclude = []
-max_commits = 20
 guidance = [
   "Keep EkzD deterministic and project-agnostic; use only the Python standard library.",
   "Preserve exact candidate binding and fail closed when required evidence is unavailable.",
-  "Use coherent Conventional Commits and retain human merge authority.",
+  "Use coherent Conventional Commits at small, meaningful implementation milestones. Keep commits logically focused; avoid batching unrelated changes into one commit and avoid noisy WIP/checkpoint commits.",
+  "Retain human merge authority.",
 ]
 
 [[verification]]

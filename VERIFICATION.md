@@ -20,13 +20,13 @@ Snapshots assume quiescent local work and do not defend against hostile concurre
 
 ## Frozen authority
 
-At `ekzd start task.toml`, EkzD validates a clean supported baseline and the committed durable `.ekzd/project.toml`, then composes it with disposable task intent and the executing runtime identity. Project schema 2 and task-authoring schema 1 are closed TOML objects. See [README.md](README.md#project-setup-and-repeated-tasks) for their complete shapes and composition rules.
+At `ekzd start task.toml`, EkzD validates a clean supported baseline and the committed durable `.ekzd/project.toml`, then composes it with disposable task intent and the executing runtime identity. Project schema 3 and task-authoring schema 2 are closed TOML objects. See [README.md](README.md#project-setup-and-repeated-tasks) for their complete shapes and composition rules.
 
-The result is one contract-version-2 JSON object. It includes baseline, branch, project name and normalized configuration digest, objective, resolved include/exclude/protected patterns, baseline sources, acceptance, additive guidance, selected budget, full ordered readiness and verification plans and exact EkzD identity. It does not refer back to the original task file. Neither worker nor maintainer reconstructs authority from mutable inputs after freezing.
+The result is one contract-version-2 JSON object. It includes baseline, branch, project name and normalized configuration digest, objective, resolved include/exclude/protected patterns, baseline sources, acceptance, additive guidance, the fixed commit ceiling, full ordered readiness and verification plans and exact EkzD identity. It does not refer back to the original task file. Neither worker nor maintainer reconstructs authority from mutable inputs after freezing.
 
 Canonical JSON is UTF-8 with sorted object keys, compact separators, unescaped Unicode, and exactly one trailing LF. Scope patterns are sorted/unique; ordered prose and command lists retain order. The SHA-256 of these bytes is the contract ID, stored alongside the contract in local metadata. It is a checksum, not a signature. The handoff accepts no legacy TOML manifests or alternate contract versions. Worker input must use the generated canonical contract.
 
-Project protections/exclusions cannot be weakened by task fields. Task commands append to required project commands, never replace them. Project and task guidance append; acceptance/guidance remain human/AI instructions rather than semantically checked predicates. Task budget overrides the project default (20 if omitted); budgets are positive integers with no universal maximum.
+Project protections/exclusions cannot be weakened by task fields. Task commands append to required project commands, never replace them. Project and task guidance append; acceptance/guidance remain human/AI instructions rather than semantically checked predicates. The frozen contract always contains EkzD's fixed 50-commit safety ceiling; project and task authoring schemas do not expose commit-limit configuration. EkzD enforces commit count and history mechanically and does not evaluate whether commits are semantically meaningful.
 
 The exact version/build SHA-256 is frozen at start and required for worker checking, maintainer verification and acceptance. The existing source identity algorithm is unchanged: sorted package-relative Python paths with normalized source line endings, independent of installation location and Git metadata. Start bundles that executing source; the portable launcher re-executes Python with `-I -S`, inserts only its bundled runtime and verifies import location/build identity. Normal installed packages, PYTHONPATH and candidate EkzD source cannot replace it. Remotes are not part of authority and are not captured.
 
@@ -79,7 +79,7 @@ Acceptance requires:
 1. an active valid local record and explicit `--accept`;
 2. matching frozen runtime identity;
 3. the declared branch, supported repository state, clean committed candidate and baseline ancestry;
-4. frozen scope, protections and commit budget satisfied;
+4. frozen scope, protections and fixed commit ceiling satisfied;
 5. successful maintainer verification bound to the exact contract ID and initial candidate;
 6. those bindings still unchanged before acceptance is written.
 
