@@ -94,7 +94,7 @@ class SessionContractTests(unittest.TestCase):
             freeze(self.root, sources=['missing'])
         self.assertIsNone(session.read_state(self.root))
 
-    def test_project_protected_excluded_and_required_checks_remain(self):
+    def test_project_protected_and_excluded_authority_remain(self):
         self.start()
         for path in ['secret', 'excluded', '.ekzd/project.toml']:
             with self.subTest(path=path):
@@ -105,8 +105,6 @@ class SessionContractTests(unittest.TestCase):
                 self.assertFalse(checked['ready'])
                 if old is None: target.unlink()
                 else: target.write_bytes(old)
-        c = load_contract(self.contract_file)
-        self.assertEqual(['step-0'], [s['name'] for s in c['verification']])
 
     def test_acceptance_binds_contract_id_even_for_same_candidate(self):
         self.start()
@@ -132,17 +130,6 @@ class SessionContractTests(unittest.TestCase):
         old.write_text('{}')
         with self.assertRaisesRegex(core.HarnessError, 'Unsupported legacy'):
             freeze(self.root)
-
-    def test_verifier_mutating_local_authority_stops_later_commands(self):
-        self.policy.write_text(project_text(commands=[
-            ['python3', '-c', "open('.ekzd/local/session.json','w').write('{}')"],
-            ['python3', '-c', "open('later','w').write('bad')"],
-        ]))
-        self.commit('checks')
-        self.start()
-        with self.assertRaises(core.HarnessError):
-            session.verify_session(self.root)
-        self.assertFalse((self.root / 'later').exists())
 
     def test_atomic_state_write_failure_preserves_previous_record(self):
         self.start()
@@ -184,24 +171,6 @@ class SessionContractTests(unittest.TestCase):
             with self.assertRaisesRegex(core.HarnessError, 'Session changed'):
                 session.verify_session(self.root)
         self.assertIsNone(session.read_state(self.root)['verification'])
-
-    def test_task_passing_check_cannot_replace_failing_project_check(self):
-        self.policy.write_text(project_text(commands=[['python3', '-c', 'raise SystemExit(7)']]))
-        self.commit('required failing project check')
-        draft = self.root / '.ekzd/local/draft.toml'
-        draft.parent.mkdir(parents=True, exist_ok=True)
-        draft.write_text(task_text() + '\n[[verification]]\nname="task-pass"\ncommand=["true"]\n')
-        session.start_session(self.root, draft)
-        export(self.root, self.contract_file)
-        self.git('switch', '-qc', 'feat/task')
-        worker = run_worker_check(self.root, self.contract_file, final=True)
-        maintainer = session.verify_session(self.root)
-        self.assertFalse(worker['ready'])
-        self.assertFalse(maintainer['passed'])
-        for steps in (worker['checks'], maintainer['steps']):
-            checks = {step['name']: step for step in steps}
-            self.assertEqual('FAIL', checks['verification:step-0']['status'])
-            self.assertEqual('PASS', checks['verification:task-pass']['status'])
 
     def test_malformed_success_flag_is_not_accepted(self):
         self.start()

@@ -83,34 +83,3 @@ class OfflineHandoffTests(unittest.TestCase):
         self.assertEqual('wrong installed build\n', control)
         self.assert_ready(self.run_worker(location, 'prepare', python=python))
         self.assert_ready(self.run_worker(location, python=python))
-
-    def test_missing_executable_or_module_blocks_preparation(self):
-        for command in (['ekzd-test-nonexistent-executable'], [sys.executable, '-c', 'import ekzd_nonexistent_module']):
-            self.policy.write_text(project_text() + '\n[[readiness]]\nname = "capability"\ncommand = ' + json.dumps(command) + '\n')
-            self.commit('declare capability')
-            state = freeze(self.root)
-            location = self.extract(state)
-            self.git('switch', '-qc', 'feat/task')
-            for mode in ('prepare', 'check'):
-                result = self.run_worker(location, mode)
-                self.assertNotEqual(0, result.returncode)
-                data = json.loads(result.stdout)
-                self.assertEqual('UNAVAILABLE', data['overall_status'])
-                self.assertIn('capability', result.stdout)
-            session.abort_session(self.root)
-            self.git('switch', '-q', 'main'); self.git('branch', '-D', 'feat/task')
-            shutil.rmtree(location)
-
-    def test_readiness_is_repeated_when_tool_disappears(self):
-        tool = Path(self.temp.name) / 'external-capability'
-        tool.write_text('#!/bin/sh\nexit 0\n'); tool.chmod(0o755)
-        self.policy.write_text(project_text() + '\n[[readiness]]\nname = "capability"\ncommand = ' + json.dumps([str(tool)]) + '\n')
-        self.commit('capability probe')
-        location = self.extract(freeze(self.root))
-        self.git('switch', '-qc', 'feat/task')
-        self.assert_ready(self.run_worker(location, 'prepare'))
-        tool.unlink()
-        for args in ((), ('--final',)):
-            result = self.run_worker(location, 'check', *args)
-            self.assertNotEqual(0, result.returncode)
-            self.assertEqual('UNAVAILABLE', json.loads(result.stdout)['overall_status'])

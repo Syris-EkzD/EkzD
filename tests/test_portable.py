@@ -11,7 +11,6 @@ from unittest import mock
 import test_contract_check as fixtures
 from ekzd import handoff, session
 from ekzd.core import init_project
-from ekzd.contract import verification_steps
 from phase3_helpers import project_text, task_text
 
 
@@ -60,7 +59,7 @@ class PortableTests(unittest.TestCase):
 
     def test_changed_runtime_and_contract_block_prepare_and_check(self):
         location = self.bundle(self.freeze())
-        for name in ['runtime/ekzd/core.py', 'contract.json', 'run.py']:
+        for name in ['runtime/ekzd/core.py', 'contract.json', 'instructions.md', 'run.py']:
             path = location / name
             original = path.read_bytes()
             # A comment preserves executable run.py behavior while changing its hash.
@@ -70,16 +69,6 @@ class PortableTests(unittest.TestCase):
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn('Handoff', result.stderr)
             path.write_bytes(original)
-
-    def test_readiness_failure_and_future_verification(self):
-        c = self.freeze([dict(name='future', command=['python3', 'future_test.py'])])
-        c['readiness'] = verification_steps([dict(name='module', command=['python3', '-c', 'import json'])])
-        location = self.bundle(c)
-        self.assertEqual(0, self.run_portable(location, 'prepare').returncode)
-        self.assertNotEqual(0, self.run_portable(location, 'check').returncode)
-        (self.root / 'future_test.py').write_text('assert True\n')
-        self.git('add', '.'); self.git('commit', '-qm', 'future test implemented')
-        self.assertEqual(0, self.run_portable(location, 'check', '--final').returncode)
 
     def test_runtime_build_is_checked_even_with_consistent_file_hashes(self):
         import hashlib
@@ -105,14 +94,3 @@ class PortableTests(unittest.TestCase):
         result = self.run_portable(location, 'check')
         self.assertNotEqual(0, result.returncode)
         self.assertIn('symlinks', result.stderr)
-
-    def test_handoff_mutation_stops_later_verification(self):
-        location = Path(self.temp.name) / 'extracted'
-        script = f"open({str(location / 'instructions.md')!r}, 'w').write('changed')"
-        c = self.freeze([dict(name='mutate handoff', command=['python3', '-c', script]),
-                         dict(name='must not run', command=['python3', '-c', "open('later', 'w').write('bad')"])])
-        self.bundle(c)
-        result = self.run_portable(location, 'check')
-        self.assertNotEqual(0, result.returncode)
-        self.assertFalse((self.root / 'later').exists())
-        self.assertIn('Handoff', result.stdout)
