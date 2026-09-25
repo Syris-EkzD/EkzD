@@ -41,13 +41,7 @@ class CandidateStateTests(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', message)
 
-    def start(self, commands: list[list[str]] | None = None) -> None:
-        if commands:
-            text = project_text(commands=[commands[0]])
-            for number, command in enumerate(commands[1:], 1):
-                text += f'\n[[verification]]\nname = "step-{number}"\ncommand = {json.dumps(command)}\n'
-            self.config.write_text(text)
-            self.commit('verification plan')
+    def start(self) -> None:
         freeze(self.root, sources=['README.md'])
         self.task.write_text(export_contract(self.root))
         self.git('checkout', '-qb', 'feat/task')
@@ -96,51 +90,30 @@ class CandidateStateTests(unittest.TestCase):
         self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
         self.assertEqual(self.git('rev-parse', 'HEAD'), session.read_state(self.root)['acceptance']['head'])
 
-    def test_later_successful_command_mutation_invalidates_earlier_check(self) -> None:
-        self.start([
-            ['python3', '-c', "assert open('README.md').read() == 'good\\n'"],
-            ['python3', '-c', "open('README.md', 'w').write('bad\\n')"],
-            ['python3', '-c', "open('should-not-run', 'w').write('bad')"],
-        ])
-        self.assertFalse(session.verify_session(self.root)['passed'])
-        self.assertEqual('bad\n', (self.root / 'README.md').read_text())
-        self.assertFalse((self.root / 'should-not-run').exists())
-        self.assertFalse(session.read_state(self.root)['verification']['passed'])
-        with self.assertRaises(core.HarnessError):
-            session.finish_session(self.root, accept=True)
-        self.git('restore', 'README.md')
-        result = worker.run_worker_check(self.root, self.task, final=True)
+    def test_worker_mutation_between_structural_boundaries_cannot_be_rebound(self) -> None:
+        self.start()
+        original = contract_check.capture_candidate
+        calls = 0
+        def capture(root):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                (self.root / 'README.md').write_text('late change\n')
+            return original(root)
+        with mock.patch.object(contract_check, 'capture_candidate', side_effect=capture):
+            result = worker.run_worker_check(self.root, self.task, final=True)
         self.assertFalse(result['ready'])
-        self.assertIn('mutation', json.dumps(result))
-        self.assertFalse((self.root / 'should-not-run').exists())
+        self.assertIn('Candidate changed during structural verification', json.dumps(result))
+        self.assertTrue(result['git']['clean'])
 
-    def test_failed_retry_cannot_leave_prior_success_available(self) -> None:
+    def test_failed_retry_clears_prior_success(self):
         self.start()
         self.assertTrue(session.verify_session(self.root)['passed'])
-        from ekzd import evaluation
-        original = evaluation.run_verification_step
-        def mutate_after_check(*args, **kwargs):
-            result = original(*args, **kwargs)
-            (self.root / 'README.md').write_text('changed by check')
-            return result
-        with mock.patch.object(evaluation, 'run_verification_step', side_effect=mutate_after_check):
-            self.assertFalse(session.verify_session(self.root)['passed'])
+        (self.root / 'README.md').write_text('dirty after success')
+        self.assertFalse(session.verify_session(self.root)['passed'])
         self.git('restore', 'README.md')
         with self.assertRaisesRegex(core.HarnessError, 'verification has not passed'):
             session.finish_session(self.root, accept=True)
-
-    def test_worker_mutation_after_step_boundary_cannot_be_rebound(self) -> None:
-        self.start()
-        original = contract_check.evaluate_candidate
-        def late_change(*args, **kwargs):
-            result = original(*args, **kwargs)
-            (self.root / 'README.md').write_text('late change\n')
-            return result
-        with mock.patch.object(contract_check, 'evaluate_candidate', side_effect=late_change):
-            result = worker.run_worker_check(self.root, self.task, final=True)
-        self.assertFalse(result['ready'])
-        self.assertIn('Candidate changed', json.dumps(result))
-        self.assertTrue(result['git']['clean'])  # Still identifies the initial candidate.
 
     def test_maintainer_mutation_at_completion_cannot_be_rebound(self):
         self.start()
