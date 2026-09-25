@@ -10,7 +10,6 @@ from ekzd.ui import (
     CYAN,
     DIM,
     GREEN,
-    RED,
     RESET,
     YELLOW,
     render_command_summary,
@@ -220,107 +219,19 @@ class UiTests(unittest.TestCase):
         self.assertIn("✓ compile", rendered)
         self.assertIn("✗ tests", rendered)
         self.assertIn("Result", rendered)
-        self.assertIn("✗ Verification failed", rendered)
-        self.assertIn("› Fix the reported failure and rerun `ekzd verify`.", rendered)
+        self.assertIn("✗ Structural verification failed", rendered)
+        self.assertIn("› Fix the reported structural failure and rerun `ekzd verify`.", rendered)
 
-    def test_failed_verification_renders_stderr_under_its_step(self) -> None:
-        verification = {"passed": False, "steps": [
-            {"name": "compile", "status": "PASS", "message": "Compilation passed."},
-            {"name": "tests", "status": "FAIL", "message": "Tests failed.",
-             "details": {"stderr": "AssertionError: expected 1"}},
-        ]}
-        rendered = render_verification_ui(verification, enabled=False)
-        self.assertIn("✗ tests: Tests failed.\n    stderr:\n      AssertionError: expected 1", rendered)
-        self.assertNotIn("    stderr:", rendered.split("✗ tests:", 1)[0])
-        self.assertIn("✗ Verification failed", rendered)
-
-    def test_failed_verification_renders_stdout(self) -> None:
-        rendered = render_verification_ui(
-            {"passed": False, "steps": [{"name": "tests", "status": "FAIL",
-                                         "details": {"stdout": "FAIL: case_a"}}]},
-            enabled=False,
-        )
-        self.assertIn("✗ tests\n    stdout:\n      FAIL: case_a", rendered)
-
-    def test_failed_verification_keeps_both_multiline_streams_and_truncation_marker(self) -> None:
-        marker = "[... 1024 bytes truncated by EkzD ...]"
-        rendered = render_verification_ui(
-            {"passed": False, "steps": [
-                {"name": "unit", "status": "FAIL", "details": {
-                    "stderr": f"first error\n\n{marker}\nlast error\n",
-                    "stdout": "test A ... ok\ntest B ... FAIL\n",
-                    "stderr_truncated": True, "stdout_truncated": True}},
-                {"name": "integration", "status": "FAIL", "details": {"stderr": "independent failure"}},
-            ]},
-            enabled=False,
-        )
-        self.assertIn(
-            f"✗ unit\n    stderr (truncated):\n      first error\n      \n      {marker}\n      last error\n"
-            "    stdout (truncated):\n      test A ... ok\n      test B ... FAIL\n"
-            "  ✗ integration\n    stderr:\n      independent failure",
-            rendered,
-        )
-        self.assertNotIn("\x1b[", rendered)
-
-    def test_unavailable_verification_renders_captured_diagnostics(self) -> None:
-        rendered = render_verification_ui(
-            {"passed": False, "steps": [
-                {"name": "readiness:compiler", "status": "UNAVAILABLE",
-                 "message": "Capability unavailable.",
-                 "details": {"stderr": "command not found", "stdout": "checked PATH"}},
-            ]},
-            enabled=False,
-        )
-        self.assertIn(
-            "✗ readiness:compiler: Capability unavailable.\n"
-            "    stderr:\n      command not found\n    stdout:\n      checked PATH",
-            rendered,
-        )
-
-    def test_missing_empty_and_malformed_optional_diagnostics_are_skipped(self) -> None:
-        verification = {"passed": False, "steps": [
-            {"name": "missing", "status": "FAIL"},
-            {"name": "none", "status": "FAIL", "details": None},
-            {"name": "list", "status": "UNAVAILABLE", "details": ["not a mapping"]},
-            {"name": "wrong-streams", "status": "FAIL",
-             "details": {"stderr": {"error": "not a string"}, "stdout": ["not a string"],
-                         "stderr_truncated": "yes"}},
-            {"name": "blank", "status": "FAIL",
-             "details": {"stderr": " \n\t ", "stdout": ""}},
-        ]}
-        rendered = render_verification_ui(verification, enabled=False)
-        for name in ("missing", "none", "list", "wrong-streams", "blank"):
-            self.assertIn(f"✗ {name}", rendered)
-        self.assertNotIn("    stderr:", rendered)
-        self.assertNotIn("    stdout:", rendered)
-        self.assertIn("✗ Verification failed", rendered)
-
-    def test_successful_verification_suppresses_diagnostics(self) -> None:
+    def test_successful_structural_verification_explains_next_boundary(self) -> None:
         rendered = render_verification_ui(
             {"passed": True, "steps": [
-                {"name": "tests", "status": "PASS", "message": "All tests passed.",
-                 "details": {"stdout": "long successful log", "stderr": "unnecessary warning",
-                             "stdout_truncated": True}},
+                {"name": "contract-authority", "status": "PASS", "message": "Frozen authority satisfied."},
             ]},
             enabled=False,
         )
-        self.assertIn("✓ tests: All tests passed.", rendered)
-        self.assertIn("✓ Verification passed", rendered)
-        self.assertNotIn("long successful log", rendered)
-        self.assertNotIn("unnecessary warning", rendered)
-        self.assertNotIn("    stdout", rendered)
-        self.assertNotIn("    stderr", rendered)
-
-    def test_failed_diagnostics_render_with_semantic_ansi_but_plain_stream_text(self) -> None:
-        verification = {"passed": False, "steps": [
-            {"name": "tests", "status": "FAIL", "details": {"stderr": "line one\nline two"}},
-        ]}
-        colored = render_verification_ui(verification, enabled=True)
-        plain = render_verification_ui(verification, enabled=False)
-        self.assertIn(RED + "tests", colored)
-        self.assertIn("    stderr:\n      line one\n      line two", colored)
-        self.assertNotIn("\x1b[", plain)
-        self.assertIn("✗ tests\n    stderr:\n      line one\n      line two", plain)
+        self.assertIn("✓ contract-authority: Frozen authority satisfied.", rendered)
+        self.assertIn("✓ Structural verification passed", rendered)
+        self.assertIn("confirm external CI", rendered)
 
 
 if __name__ == "__main__":

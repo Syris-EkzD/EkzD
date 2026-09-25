@@ -103,12 +103,6 @@ def render_worker_check(result: dict[str, Any]) -> str:
     for item in result.get("checks", []):
         marker = {"PASS": "✓", "FAIL": "✗", "UNAVAILABLE": "!", "WARN": "!"}.get(item["status"], "-")
         lines.append(f"{marker} {item['status']:<11} {item['name']}: {item['message']}")
-        if item["status"] in {"FAIL", "UNAVAILABLE"}:
-            details = item.get("details", {})
-            for label in ("stderr", "stdout"):
-                output = details.get(label)
-                if isinstance(output, str) and output.strip():
-                    lines.extend(f"    {label}: {line}" for line in output.rstrip().splitlines())
     lines.append("")
-    lines.append("Ready for handoff." if result.get("ready") else "Not ready for handoff.")
+    lines.append("Structural authority satisfied." if result.get("ready") else "Structural authority not satisfied.")
     return "\n".join(lines) + "\n"

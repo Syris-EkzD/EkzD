@@ -1,5 +1,4 @@
 """History/scope regressions retained across the contract-model break."""
-import json
 import subprocess
 import tempfile
 import unittest
@@ -134,15 +133,3 @@ class AuthorityHistoryTests(unittest.TestCase):
         self.both_reject('Commit safety ceiling exceeded: 51 > 50')
         session.abort_session(self.root)
         self.assertEqual('aborted', session.read_state(self.root)['status'])
-
-    def test_verifier_created_commit_invalidates_original_candidate(self):
-        self.policy.write_text(project_text(commands=[['git', 'commit', '--allow-empty', '-m', 'verifier mutation']]))
-        self.commit('mutating check')
-        self.start()
-        before = self.git('rev-parse', 'HEAD')
-        verification = session.verify_session(self.root)
-        self.assertFalse(verification['passed'])
-        self.assertEqual(before, verification['candidate']['head'])
-        self.assertNotEqual(before, self.git('rev-parse', 'HEAD'))
-        with self.assertRaises(core.HarnessError):
-            session.finish_session(self.root, accept=True)

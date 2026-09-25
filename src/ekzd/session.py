@@ -175,7 +175,7 @@ def verify_session(root: Path) -> dict:
 
     with lifecycle_lock(root):
         state = active_state(root)
-        # Clear old evidence before any preflight failure or verifier execution.
+        # Clear old evidence before any independent structural verification attempt.
         state["verification"] = None
         state["acceptance"] = None
         write_state(root, state)
@@ -213,7 +213,7 @@ def finish_session(root: Path, *, accept: bool) -> dict:
             raise HarnessError("Acceptance blocked: verification has not passed.")
         if verification.get("contract_id") != state["contract_id"] or verification.get("candidate") != candidate.binding():
             raise HarnessError("Acceptance blocked: stale candidate/contract evidence; rerun verification.")
-        result = check_contract(root, contract, final=True, run_commands=False)
+        result = check_contract(root, contract, final=True)
         if not result["ready"]:
             raise HarnessError("Acceptance blocked: " + "; ".join(item["message"] for item in result["checks"] if item["status"] in {"FAIL", "UNAVAILABLE"}))
         if capture_candidate(root) != candidate or state_digest(root) != digest:

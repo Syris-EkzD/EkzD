@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +7,6 @@ from unittest import mock
 
 from ekzd import __version__
 from ekzd.identity import BuildIdentityUnavailable, build_sha256, runtime_identity
-from ekzd.worker import run_worker_check
 
 
 class IdentityTests(unittest.TestCase):

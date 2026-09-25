@@ -22,20 +22,6 @@ def _instruction_list(items: list[str]) -> str:
     return "\n".join(f"- {json.dumps(item, ensure_ascii=False)}" for item in items)
 
 
-def _instruction_steps(steps: list[dict]) -> str:
-    if not steps:
-        return "- None declared."
-    rendered = []
-    for index, step in enumerate(steps, 1):
-        rendered.extend([
-            f"{index}. Name: {json.dumps(step['name'], ensure_ascii=False)}",
-            f"   - Command argv: {json.dumps(step['command'], ensure_ascii=False)}",
-            f"   - Working directory: {json.dumps(step['cwd'], ensure_ascii=False)}",
-            f"   - Timeout: {step['timeout_seconds']} seconds",
-        ])
-    return "\n".join(rendered)
-
-
 def instructions(contract: dict) -> bytes:
     sources = ""
     if contract['sources']:
@@ -78,14 +64,6 @@ worker-facing rendering.
 
 {_instruction_list(contract['acceptance'])}
 {sources}{guidance}
-## Readiness checks
-
-{_instruction_steps(contract['readiness'])}
-
-## Verification checks
-
-{_instruction_steps(contract['verification'])}
-
 ## Worker flow
 
 Obtain the target repository checkout separately; this archive contains no repository or tools.
@@ -96,37 +74,74 @@ the exact baseline, then run:
     python3 /path/to/handoff/run.py prepare
     python3 /path/to/handoff/run.py check
 
-Implement, run iterative `check` commands, fix failures, and self-review. Commit at small,
-meaningful implementation milestones. Keep each commit logically focused; avoid batching unrelated
-or excessive work into one large commit and avoid noisy WIP, checkpoint, or fixup commits. Use as
-many coherent commits as the task reasonably requires, up to the effective commit ceiling. EkzD
-mechanically enforces commit-count and history rules; it does not judge commit meaning.
+`prepare` checks the pinned EkzD runtime, handoff and contract identity, supported Linux/Python/Git
+environment, supported repository state, frozen baseline availability, declared branch, and exact
+clean baseline state. It does not inspect or install project-specific dependencies or toolchains.
+
+Implement the task, run iterative `check` commands, fix structural failures, and self-review.
+Development `check` validates current structural authority while permitting legitimate dirty work
+inside the frozen scope. It does not run tests, formatting, linting, static analysis, builds,
+dependency checks, or other project correctness commands.
+
+Make small, meaningful implementation milestones. Keep commits logically focused. Avoid batching
+unrelated changes into one giant commit, and avoid noisy WIP, checkpoint, or fixup commits. Use
+Conventional Commits where practical. Prefer `type(scope): description` when a meaningful scope
+improves clarity; omit the scope when it adds no useful information. Use as many coherent commits as
+reasonably necessary, up to the fixed 50-commit safety ceiling. EkzD mechanically enforces only the
+commit count and historical scope; it does not judge commit-message quality or semantic meaning.
 
 When the candidate is complete, clean, and committed, run:
 
     python3 /path/to/handoff/run.py check --final
 
-Preparation probes capabilities only; correctness verification may depend on files the task will
-create. Every check repeats readiness before verification.
+`check --final` requires a clean, fully committed candidate and validates the complete frozen
+structural authority for that exact Git-visible state. A PASS means only that the exact candidate
+complies with the frozen EkzD authority. It does not mean the code builds, tests pass, lint or
+formatting passes, or acceptance criteria are semantically satisfied.
+
+## External CI completion rule
+
+EkzD structural success is not task completion.
+
+After a clean committed candidate passes `run.py check --final`, publish or push that candidate
+through the externally provided workflow and wait for all required CI checks for that exact candidate
+commit. Do not report the implementation session as successfully complete while required CI is
+pending or failing. EkzD does not query or control CI.
+
+If CI fails because of tests, builds, lint, formatting, static analysis, or another project-specific
+correctness check:
+
+1. Inspect the CI failure.
+2. Fix the implementation within the frozen authorized scope.
+3. Commit the coherent fix.
+4. Rerun EkzD structural checking, including `run.py check --final` for the new exact candidate.
+5. Publish the new candidate.
+6. Wait for CI again.
+
+Repeat until the exact candidate has both EkzD structural PASS and required external CI PASS.
 
 ## Escalation rules
 
 - Do not widen the frozen task authority.
-- Do not install missing capabilities through EkzD. Stop and report the exact blocker.
 - Stop and report when requirements are ambiguous or the task requires unauthorized scope.
+- Stop and report if fixing CI would require an unauthorized path, a protected path, requirement
+  interpretation, CI configuration changes outside the task, unavailable external infrastructure,
+  or another genuine decision.
 - Do not merge. The maintainer independently verifies and retains final merge authority.
 
 ## Required worker return
 
 - Exact branch.
-- Exact commit.
+- Exact candidate commit.
 - Contract ID.
-- Verification result, including the final check result.
+- Final EkzD structural result.
+- Required CI status for that exact candidate, including the CI run/check reference or URL when
+  available.
 - Changed files.
 - Unresolved issues and review notes.
 
-Worker success is not acceptance; the maintainer independently verifies and explicitly accepts the
-candidate.
+The maintainer independently verifies the exact candidate. Human review retains semantic,
+architectural, code-quality, acceptance, and merge authority. The worker must not merge.
 '''
     return text.encode('utf-8')
 

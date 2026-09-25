@@ -29,20 +29,12 @@ class HandoffTests(unittest.TestCase):
             sources=['README.md'],
             acceptance=['Feature works.', 'Regression is covered.'],
             guidance=['Keep the task rule.'],
-            readiness=[dict(name='git', command=['git', '--version'])],
-            verification=[dict(name='focused', command=['python3', '-m', 'unittest', 'tests.test_feature'], cwd='.', timeout_seconds=45)],
         )
         contract = compose_contract(
             project(
                 protected=['secrets/'],
                 exclude=['generated/**'],
                 guidance=['Keep the project rule.'],
-                readiness=[dict(
-                    name='python',
-                    command=['python3', '--version'],
-                    cwd='tools',
-                    timeout_seconds=30,
-                )],
             ),
             task_data,
             'a' * 40,
@@ -60,15 +52,18 @@ class HandoffTests(unittest.TestCase):
                 'Regression is covered.', '## Declared source/reference files',
                 'README.md', '## Project/task guidance', 'Keep the project rule.',
                 'Keep the task rule.', f"Effective commit ceiling: {contract['max_commits']} commits",
-                '## Readiness checks', 'python3', '--version', 'tools', '30 seconds',
-                'git', '## Verification checks', 'focused', 'tests.test_feature',
-                '45 seconds', 'run.py prepare', 'run.py check', 'run.py check --final',
-                'meaningful implementation milestones', 'does not judge commit meaning',
-                'Do not widen the frozen task authority', 'Do not install missing capabilities',
+                'run.py prepare', 'run.py check', 'run.py check --final',
+                'meaningful implementation milestones', 'Conventional Commits',
+                'type(scope): description', 'does not judge commit-message quality',
+                'EkzD structural success is not task completion', 'required external CI PASS',
+                'pending or failing', 'CI run/check reference or URL',
+                'Do not widen the frozen task authority',
                 'requirements are ambiguous', 'unauthorized scope', 'Do not merge',
-                'Exact branch', 'Exact commit', 'Contract ID', 'Verification result',
+                'Exact branch', 'Exact candidate commit', 'Contract ID', 'Final EkzD structural result',
                 'Changed files', 'Unresolved issues and review notes'):
             self.assertIn(expected, rendered)
+        for obsolete in ('## Readiness checks', '## Verification checks', 'Command argv:', 'Timeout:'):
+            self.assertNotIn(obsolete, rendered)
 
     def test_instructions_shell_quote_git_valid_branch_as_one_literal_argument(self):
         branch = 'feat/task$(printf-owned)'

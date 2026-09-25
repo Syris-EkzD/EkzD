@@ -15,9 +15,9 @@ from typing import Any
 
 from .core import HarnessError, run_git_bytes
 
-PROJECT_VERSION = 3
-TASK_VERSION = 2
-CONTRACT_VERSION = 2
+PROJECT_VERSION = 4
+TASK_VERSION = 3
+CONTRACT_VERSION = 3
 MAX_COMMIT_CEILING = 50
 BUILTIN_PROTECTED = [".ekzd/project.toml", ".ekzd/local/", ".ekzd/session.json"]
 LEGACY_MESSAGE = "Unsupported legacy EkzD session/task format. Remove the old local session and start a new task with the current schema."
@@ -60,44 +60,18 @@ def _version(value: Any, expected: int, label: str) -> None:
         raise HarnessError(f"Unsupported {label} version; expected integer {expected}. {LEGACY_MESSAGE}")
 
 
-def verification_steps(value: Any, *, required: bool = False, label: str = "verification") -> list[dict]:
-    if not isinstance(value, list) or (required and not value):
-        raise HarnessError(f"{label} must be a non-empty array of steps." if required else f"{label} must be an array of steps.")
-    result = []
-    table = label
-    for index, raw in enumerate(value):
-        label = f"{table}[{index}]"
-        step = _object(raw, {"name", "command", "cwd", "timeout_seconds"}, label)
-        command = _strings(step.get("command"), f"{label}.command", required=True)
-        cwd = _strings([step.get("cwd", ".")], f"{label}.cwd", paths=True)[0]
-        timeout = _positive(step.get("timeout_seconds", 600), f"{label}.timeout_seconds")
-        if timeout > 3600:
-            raise HarnessError(f"{label}.timeout_seconds must be at most 3600.")
-        result.append({"name": _text(step.get("name"), f"{label}.name"), "command": command,
-                       "cwd": cwd, "timeout_seconds": timeout})
-    return result
-
-
-def parse_project(data: Any, *, ready: bool = True) -> dict:
+def parse_project(data: Any) -> dict:
     if isinstance(data, dict):
         _version(data.get("schema_version"), PROJECT_VERSION, "project schema")
-    data = _object(data, {"schema_version", "name", "protected", "exclude", "guidance", "verification", "readiness"}, "project")
-    project_verification = data.get("verification", [])
-    if ready and project_verification == []:
-        raise HarnessError(
-            "Project verification is not configured; add at least one [[verification]] step "
-            "to .ekzd/project.toml before starting a task."
-        )
+    data = _object(data, {"schema_version", "name", "protected", "exclude", "guidance"}, "project")
     return {"schema_version": PROJECT_VERSION, "name": _text(data.get("name"), "project.name"),
             "protected": sorted(set(_strings(data.get("protected", []), "project.protected", paths=True))),
             "exclude": sorted(set(_strings(data.get("exclude", []), "project.exclude", paths=True))),
-            "guidance": _strings(data.get("guidance", []), "project.guidance"),
-            "verification": verification_steps(project_verification, required=ready),
-            "readiness": verification_steps(data.get("readiness", []), label="readiness")}
+            "guidance": _strings(data.get("guidance", []), "project.guidance")}
 
 
 def parse_task(data: Any) -> dict:
-    data = _object(data, {"schema_version", "objective", "branch", "include", "exclude", "sources", "acceptance", "guidance", "verification", "readiness"}, "task")
+    data = _object(data, {"schema_version", "objective", "branch", "include", "exclude", "sources", "acceptance", "guidance"}, "task")
     _version(data.get("schema_version"), TASK_VERSION, "task schema")
     result = {"schema_version": TASK_VERSION,
               "objective": _text(data.get("objective"), "task.objective"),
@@ -106,9 +80,7 @@ def parse_task(data: Any) -> dict:
               "exclude": sorted(set(_strings(data.get("exclude", []), "task.exclude", paths=True))),
               "sources": sorted(set(_strings(data.get("sources", []), "task.sources", paths=True))),
               "acceptance": _strings(data.get("acceptance"), "task.acceptance", required=True),
-              "guidance": _strings(data.get("guidance", []), "task.guidance"),
-              "verification": verification_steps(data.get("verification", [])),
-              "readiness": verification_steps(data.get("readiness", []), label="readiness")}
+              "guidance": _strings(data.get("guidance", []), "task.guidance")}
     return result
 
 
@@ -140,7 +112,7 @@ def _hex(value: Any, lengths: tuple[int, ...], label: str) -> str:
 def validate_contract(data: Any) -> dict:
     if isinstance(data, dict):
         _version(data.get("contract_version"), CONTRACT_VERSION, "contract")
-    data = _object(data, {"contract_version", "baseline", "branch", "project", "objective", "scope", "sources", "acceptance", "guidance", "max_commits", "verification", "readiness", "ekzd"}, "contract")
+    data = _object(data, {"contract_version", "baseline", "branch", "project", "objective", "scope", "sources", "acceptance", "guidance", "max_commits", "ekzd"}, "contract")
     _hex(data.get("baseline"), (40, 64), "contract.baseline")
     for key in ("branch", "objective"):
         _text(data.get(key), f"contract.{key}")
@@ -159,10 +131,6 @@ def validate_contract(data: Any) -> dict:
     if _positive(data.get("max_commits"), "contract.max_commits") != MAX_COMMIT_CEILING:
         raise HarnessError(
             f"contract.max_commits must equal the fixed {MAX_COMMIT_CEILING}-commit safety ceiling.")
-    if verification_steps(data.get("verification"), required=True) != data["verification"]:
-        raise HarnessError("Contract verification steps must contain resolved defaults.")
-    if verification_steps(data.get("readiness"), label="readiness") != data["readiness"]:
-        raise HarnessError("Contract readiness steps must contain resolved defaults.")
     identity = _object(data.get("ekzd"), {"version", "build_sha256"}, "contract.ekzd")
     _text(identity.get("version"), "contract.ekzd.version")
     _hex(identity.get("build_sha256"), (64,), "contract.ekzd.build_sha256")
@@ -179,9 +147,7 @@ def compose_contract(project: dict, task: dict, baseline: str, identity: dict) -
                   "protected": sorted(set(BUILTIN_PROTECTED + project["protected"]))},
         "sources": task["sources"], "acceptance": task["acceptance"],
         "guidance": project["guidance"] + task["guidance"],
-        "max_commits": MAX_COMMIT_CEILING,
-        "verification": project["verification"] + task["verification"],
-        "readiness": project["readiness"] + task["readiness"], "ekzd": dict(identity),
+        "max_commits": MAX_COMMIT_CEILING, "ekzd": dict(identity),
     })
 
 

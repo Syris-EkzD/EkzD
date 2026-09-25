@@ -25,7 +25,7 @@ _OPERATIONS = (
 
 def ensure_supported_repository(root: Path) -> None:
     if run_git(root, "rev-parse", "--is-shallow-repository") == "true":
-        raise HarnessError("Shallow repositories are unsupported; fetch complete history before evaluation.")
+        raise HarnessError("Shallow repositories are unsupported; fetch complete history before checking.")
     sparse = subprocess.run(["git", "config", "--bool", "core.sparseCheckout"], cwd=root, capture_output=True)
     if sparse.returncode not in (0, 1):
         raise HarnessError("Unable to inspect sparse-checkout configuration.")
@@ -36,7 +36,7 @@ def ensure_supported_repository(root: Path) -> None:
         if not path.is_absolute():
             path = root / path
         if path.exists() or path.is_symlink():
-            raise HarnessError(f"Repository operation in progress ({name}); complete or abort it before evaluation.")
+            raise HarnessError(f"Repository operation in progress ({name}); complete or abort it before checking.")
     grafts = Path(run_git(root, "rev-parse", "--git-path", "info/grafts"))
     if not grafts.is_absolute():
         grafts = root / grafts
@@ -52,7 +52,7 @@ def _index(root: Path) -> dict[bytes, tuple[bytes, bytes]]:
         metadata, path = record.split(b"\t", 1)
         mode, oid, stage = metadata.split()
         if stage != b"0":
-            raise HarnessError("Unresolved index conflicts; resolve and commit before evaluation.")
+            raise HarnessError("Unresolved index conflicts; resolve and commit before checking.")
         if mode == b"160000":
             raise HarnessError("Submodules are unsupported, including dirty submodule working trees.")
         if mode not in (b"100644", b"100755", b"120000"):

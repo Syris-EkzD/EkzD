@@ -1,4 +1,4 @@
-"""Shared frozen-contract authority checks around the existing candidate evaluator."""
+"""Shared deterministic checks for frozen authority and exact candidate state."""
 from __future__ import annotations
 
 import sys
@@ -6,17 +6,16 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
-from .candidate import capture_candidate
+from .candidate import capture_candidate, require_final
 from .check import check_result, empty_worker_result, finalize_worker_result
 from .contract import contract_id, validate_baseline_sources, validate_branch, validate_contract
 from .core import HarnessError, _matches_scope, session_commit_count, session_history_paths, run_git
-from .evaluation import VerificationStep, evaluate_candidate
 from .identity import BuildIdentityUnavailable, runtime_identity
 
 
-def check_contract(root: Path, contract: dict, *, final: bool, run_commands: bool = True,
+def check_contract(root: Path, contract: dict, *, final: bool,
                    authority_guard: Callable[[], None] | None = None, prepare: bool = False) -> dict:
-    """Bind authority prechecks and all verifiers to one captured candidate.
+    """Bind all structural authority checks to one captured candidate.
 
     The caller owns the contract's provenance and any persistence/file guard.
     Neither current project TOML nor authoring task files are consulted here.
@@ -31,7 +30,7 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
     try:
         validate_contract(contract)
         if sys.platform != "linux" or sys.version_info < (3, 11):
-            raise HarnessError("Worker evaluation requires Linux and Python 3.11 or newer.")
+            raise HarnessError("EkzD checking requires Linux and Python 3.11 or newer.")
         if shutil.which("git") is None:
             raise HarnessError("Required executable is unavailable: git")
         identity = runtime_identity()
@@ -84,33 +83,24 @@ def check_contract(root: Path, contract: dict, *, final: bool, run_commands: boo
         add("contract-authority", "FAIL", str(exc))
         return finalize_worker_result(result)
 
-    # Preparation runs capability probes only. Every checking attempt repeats
-    # them; success is never cached. Both passes use the same initial candidate.
-    groups = [("readiness", contract["readiness"])] if contract["readiness"] or prepare else []
-    if not prepare:
-        groups.append(("verification", contract["verification"]))
-    if not run_commands:
-        groups = [("verification", [])]
-    for prefix, configured in groups:
-        steps = [VerificationStep(name=s["name"], command=tuple(s["command"]), cwd=s["cwd"],
-                                  timeout_seconds=s["timeout_seconds"], prefix=prefix) for s in configured]
-        evaluation = evaluate_candidate(root, steps, mode="final" if final or prepare else "development",
-                                        implementation_branch=contract["branch"], expected_candidate=candidate,
-                                        authority_guard=authority_guard)
-        for evidence in evaluation.steps:
-            status = evidence.status
-            if prefix == "readiness" and status == "FAIL" and not evidence.trust_lost:
-                status = "UNAVAILABLE"
-            add(evidence.name, status, evidence.message, **evidence.details())
-        if not evaluation.passed:
-            break
+    if final:
+        try:
+            require_final(candidate, contract["branch"])
+            add("candidate-state", "PASS", "Final candidate is clean, fully committed, and on the declared branch.")
+        except HarnessError as exc:
+            add("candidate-state", "FAIL", str(exc))
+            return finalize_worker_result(result)
+
     try:
         if authority_guard:
             authority_guard()
         if runtime_identity() != contract["ekzd"]:
-            raise HarnessError("Executing runtime changed during evaluation.")
+            raise HarnessError("Executing EkzD runtime changed during structural checking.")
         if capture_candidate(root) != candidate:
-            raise HarnessError("Candidate changed after evaluation; result remains bound to the initial state.")
+            raise HarnessError("Candidate changed during structural checking; result remains bound to the initial state.")
+        if authority_guard:
+            authority_guard()
+        add("state-binding", "PASS", "Structural result is bound to the initial contract and Git-visible candidate state.")
     except (HarnessError, BuildIdentityUnavailable, OSError) as exc:
         add("state-binding", "FAIL", str(exc))
     return finalize_worker_result(result)
